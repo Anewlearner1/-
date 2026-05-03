@@ -15,7 +15,9 @@ import os
 import re
 import shutil
 import sys
+import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
@@ -35,15 +37,20 @@ REPORTS_DIR = Path("reports")
 client = anthropic.Anthropic()
 MODEL = "claude-sonnet-4-6"
 
-SYSTEM_PROMPT = """You are an expert academic literature analyst. Your job is to autonomously read, \
-analyze, and synthesize academic papers, then produce a comprehensive written report.
+SYSTEM_PROMPT = """You are an expert academic literature analyst. Your job is to autonomously \
+search for, read, analyze, and synthesize academic papers, then produce a comprehensive written report.
 
 ## Workflow
-1. Call `list_papers` to see what is available in the papers/ directory
-2. Read each paper thoroughly with `read_file` (local files) or `fetch_paper` (URLs)
-3. For each paper, extract: research question, methodology, key findings, contributions, limitations
-4. After reading all papers, synthesize cross-cutting themes, contradictions, and research gaps
-5. Call `write_report` to save the final report as Markdown
+1. **Find papers** — use `search_papers` to discover relevant literature on the topic (arXiv).
+   Select the most relevant results and fetch them with `fetch_paper`.
+   Also call `list_papers` to include any locally available files.
+2. **Read** each paper with `read_file` (local) or `fetch_paper` (remote URLs).
+   For PDFs always supply `save_as` to fetch_paper, then call `read_file` on the saved file.
+3. **Analyse** each paper: research question, methodology, key findings, contributions, limitations.
+4. **Synthesise** across papers: common themes, contradictions, research gaps.
+5. **Report** — call `write_report` to save the final Markdown report.
+
+Aim to review at least 3–5 papers. Prefer high-quality, well-cited work.
 
 ## Report structure
 # Literature Analysis Report
@@ -170,6 +177,70 @@ def fetch_paper(url: str, save_as: str | None = None) -> str:
     return f"[Fetched: {url}]{saved_note}\n\n{text[:60_000]}"
 
 
+def search_papers(query: str, max_results: int = 5) -> str:
+    max_results = min(max(1, max_results), 10)
+    encoded = urllib.parse.quote(query)
+    url = (
+        f"http://export.arxiv.org/api/query"
+        f"?search_query=all:{encoded}"
+        f"&start=0&max_results={max_results}"
+        f"&sortBy=relevance&sortOrder=descending"
+    )
+    try:
+        req = urllib.request.Request(
+            url, headers={"User-Agent": "LiteratureAnalysisAgent/1.0"}
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = resp.read()
+    except Exception as exc:
+        return f"Error querying arXiv: {exc}"
+
+    ns = {
+        "atom": "http://www.w3.org/2005/Atom",
+        "arxiv": "http://arxiv.org/schemas/atom",
+    }
+    try:
+        root = ET.fromstring(data)
+    except ET.ParseError as exc:
+        return f"Error parsing arXiv response: {exc}"
+
+    entries = root.findall("atom:entry", ns)
+    if not entries:
+        return f"No results found for query: '{query}'"
+
+    lines = [f"arXiv search results for '{query}' ({len(entries)} found):\n"]
+    for i, entry in enumerate(entries, 1):
+        title = (entry.findtext("atom:title", "", ns) or "").strip().replace("\n", " ")
+        summary = (entry.findtext("atom:summary", "", ns) or "").strip().replace("\n", " ")
+        if len(summary) > 300:
+            summary = summary[:297] + "…"
+        authors = [
+            a.findtext("atom:name", "", ns)
+            for a in entry.findall("atom:author", ns)
+        ]
+        published = (entry.findtext("atom:published", "", ns) or "")[:4]
+        arxiv_id = ""
+        pdf_url = ""
+        for link in entry.findall("atom:link", ns):
+            rel = link.get("rel", "")
+            href = link.get("href", "")
+            title_attr = link.get("title", "")
+            if title_attr == "pdf" or rel == "related" and "pdf" in href:
+                pdf_url = href
+            if rel == "alternate":
+                arxiv_id = href.split("/abs/")[-1] if "/abs/" in href else ""
+        if not pdf_url and arxiv_id:
+            pdf_url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
+
+        lines.append(f"{i}. **{title}**")
+        lines.append(f"   Authors: {', '.join(authors[:3])}{' et al.' if len(authors) > 3 else ''}")
+        lines.append(f"   Year: {published}  |  arXiv ID: {arxiv_id}")
+        lines.append(f"   PDF: {pdf_url}")
+        lines.append(f"   Abstract: {summary}")
+        lines.append("")
+    return "\n".join(lines)
+
+
 def write_report(filename: str, content: str) -> str:
     REPORTS_DIR.mkdir(exist_ok=True)
     if not filename.endswith((".md", ".txt")):
@@ -228,6 +299,28 @@ TOOLS: list[anthropic.types.ToolParam] = [
         },
     },
     {
+        "name": "search_papers",
+        "description": (
+            "Search arXiv for academic papers matching a topic or keywords. "
+            "Returns titles, authors, year, arXiv ID, PDF URL, and abstract snippets. "
+            "Use the PDF URL with fetch_paper(save_as=...) to download a paper."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query, e.g. 'transformer attention mechanism NLP'",
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Number of results to return (1–10, default 5)",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
         "name": "write_report",
         "description": "Save the completed analysis report to the reports/ directory.",
         "input_schema": {
@@ -259,6 +352,8 @@ def dispatch(name: str, inputs: dict[str, Any]) -> str:
             return read_file(inputs["filename"])
         case "fetch_paper":
             return fetch_paper(inputs["url"], inputs.get("save_as"))
+        case "search_papers":
+            return search_papers(inputs["query"], inputs.get("max_results", 5))
         case "write_report":
             return write_report(inputs["filename"], inputs["content"])
         case _:
