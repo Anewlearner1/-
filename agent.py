@@ -23,13 +23,7 @@ from typing import Any
 
 import anthropic
 
-# Optional PDF support
-try:
-    import pdfplumber
-
-    PDF_SUPPORT = True
-except ImportError:
-    PDF_SUPPORT = False
+PDF_SUPPORT = False  # resolved lazily inside read_file
 
 PAPERS_DIR = Path("papers")
 REPORTS_DIR = Path("reports")
@@ -110,12 +104,14 @@ def read_file(filename: str) -> str:
     suffix = path.suffix.lower()
     try:
         if suffix == ".pdf":
-            if not PDF_SUPPORT:
+            try:
+                import pdfplumber as _pdfplumber
+            except Exception:
                 return (
                     "PDF support requires pdfplumber. "
                     "Install it with:  pip install pdfplumber"
                 )
-            with pdfplumber.open(path) as pdf:
+            with _pdfplumber.open(path) as pdf:
                 pages = []
                 for i, page in enumerate(pdf.pages, 1):
                     text = (page.extract_text() or "").strip()
