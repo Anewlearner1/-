@@ -33,7 +33,7 @@ PAPERS_DIR = Path("papers")
 REPORTS_DIR = Path("reports")
 
 client = anthropic.Anthropic()
-MODEL = "claude-opus-4-7"
+MODEL = "claude-sonnet-4-6"
 
 SYSTEM_PROMPT = """You are an expert academic literature analyst. Your job is to autonomously read, \
 analyze, and synthesize academic papers, then produce a comprehensive written report.
