@@ -7,11 +7,12 @@ Usage:
     python main.py --interval 30    # run every 30 minutes
 
 Environment variables required:
-    ANTHROPIC_API_KEY   — your Anthropic API key
+    ANTHROPIC_API_KEY    — your Anthropic API key
 
 Optional:
-    REPORT_DIR          — directory to save reports (default: ./reports)
-    MARKET_OPEN_ONLY    — if "1", only run during Taiwan market hours 09:00-13:30 CST
+    DISCORD_WEBHOOK_URL  — Discord channel webhook URL for push notifications
+    REPORT_DIR           — directory to save reports (default: ./reports)
+    MARKET_OPEN_ONLY     — if "1", only run during Taiwan market hours 09:00-13:30 CST
 """
 import argparse
 import json
@@ -24,6 +25,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from agent import run_analysis
+from notifier import send_report, send_error, send_startup
 
 TAIPEI_TZ = ZoneInfo("Asia/Taipei")
 REPORT_DIR = Path(os.environ.get("REPORT_DIR", "./reports"))
@@ -103,6 +105,7 @@ def run_once() -> dict | None:
         print("  最新分析摘要 (前 500 字):")
         print("  " + result["report"][:500].replace("\n", "\n  "))
         print(f"{'='*60}")
+        send_report(result)
         return result
     except KeyboardInterrupt:
         raise
@@ -110,6 +113,7 @@ def run_once() -> dict | None:
         print(f"\n  [錯誤] 分析執行失敗: {e}")
         import traceback
         traceback.print_exc()
+        send_error(str(e))
         return None
 
 
@@ -122,7 +126,9 @@ def run_scheduler(interval_seconds: int):
     print(f"  執行間隔: 每 {interval_seconds // 60} 分鐘")
     print(f"  報告目錄: {REPORT_DIR.resolve()}")
     print(f"  僅在市場時間執行: {'是' if MARKET_OPEN_ONLY else '否'}")
+    print(f"  Discord 推送: {'已啟用' if os.environ.get('DISCORD_WEBHOOK_URL') else '未設定'}")
     print(f"  按 Ctrl+C 停止\n")
+    send_startup(interval_seconds // 60)
 
     while _running:
         _print_banner()
