@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 type Status = 'idle' | 'saving' | 'saved' | 'error'
 
@@ -10,15 +10,17 @@ interface Props {
   onSaved?: (id: string) => void
 }
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
-
 export default function SaveButton({ product, treeJson, onSaved }: Props) {
   const [status, setStatus] = useState<Status>('idle')
+
+  useEffect(() => {
+    setStatus('idle')
+  }, [product, treeJson])
 
   const handleSave = async () => {
     setStatus('saving')
     try {
-      const res = await fetch(`${API_BASE}/api/v1/analyses/save`, {
+      const res = await fetch('/api/analyses/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ product, tree_json: treeJson }),
@@ -35,7 +37,7 @@ export default function SaveButton({ product, treeJson, onSaved }: Props) {
   return (
     <button
       onClick={handleSave}
-      disabled={status === 'saving'}
+      disabled={status === 'saving' || status === 'saved'}
       className="rounded border px-3 py-1 text-sm disabled:opacity-50"
     >
       {status === 'idle' && 'Save'}

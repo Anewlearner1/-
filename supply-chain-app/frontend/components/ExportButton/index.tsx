@@ -22,7 +22,9 @@ export default function ExportButton({ analysisId, product }: Props) {
       const a = document.createElement('a')
       a.href = url
       a.download = `${product.replace(/\s+/g, '-')}-supply-chain.pdf`
+      document.body.appendChild(a)
       a.click()
+      document.body.removeChild(a)
       URL.revokeObjectURL(url)
       setStatus('idle')
     } catch {

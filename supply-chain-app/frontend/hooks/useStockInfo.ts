@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { API_BASE } from '@/lib/api'
 
 export interface StockInfo {
   symbol: string
@@ -14,8 +15,6 @@ interface State {
   loading: boolean
   error: string | null
 }
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
 
 export default function useStockInfo(nodeLabel: string, nodeDescription: string): State {
   const [state, setState] = useState<State>({ data: null, loading: false, error: null })

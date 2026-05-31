@@ -9,28 +9,24 @@ interface HistoryItem {
   created_at: string
 }
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
-
 export default function HistoryPage() {
   const [items, setItems] = useState<HistoryItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    fetch(`${API_BASE}/api/v1/analyses/history`, {
-      headers: { Authorization: `Bearer ${localStorage.getItem('token') ?? ''}` },
-    })
-      .then((r) => r.json())
+    fetch('/api/analyses/history')
+      .then((r) => {
+        if (!r.ok) throw new Error(`Status ${r.status}`)
+        return r.json()
+      })
       .then(setItems)
       .catch(() => setError('Failed to load history'))
       .finally(() => setLoading(false))
   }, [])
 
   const handleDelete = async (id: string) => {
-    await fetch(`${API_BASE}/api/v1/analyses/${id}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${localStorage.getItem('token') ?? ''}` },
-    })
+    await fetch(`/api/analyses/${id}`, { method: 'DELETE' })
     setItems((prev) => prev.filter((i) => i.id !== id))
   }
 
