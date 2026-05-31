@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.config import settings
-from app.routers import analysis, analyses
+from app.routers import analysis, analyses, stocks
 
 
 @asynccontextmanager
@@ -15,6 +15,7 @@ app = FastAPI(title="Supply Chain Intelligence API", lifespan=lifespan)
 
 app.include_router(analysis.router)
 app.include_router(analyses.router)
+app.include_router(stocks.router)
 
 
 @app.get("/health")

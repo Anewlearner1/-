@@ -34,6 +34,27 @@ class ClaudeService:
     def __init__(self) -> None:
         self._client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
 
+    async def identify_companies(self, node_label: str, node_description: str) -> list[str]:
+        message = self._client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=512,
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"List the stock tickers of publicly listed companies that manufacture or supply: "
+                    f"{node_label} ({node_description}). "
+                    "Return ONLY a JSON array of ticker symbols, e.g. [\"TSM\",\"INTC\"]. "
+                    "Include tickers from US, Taiwan, Japan, and European exchanges. "
+                    "Return at most 6 tickers. No explanation."
+                ),
+            }],
+        )
+        raw = message.content[0].text.strip()
+        raw = re.sub(r"^```(?:json)?\s*", "", raw)
+        raw = re.sub(r"\s*```$", "", raw.strip())
+        tickers = json.loads(raw)
+        return [str(t).strip() for t in tickers if t]
+
     async def analyze(self, product: str, context: str = "") -> dict:
         user_content = f"Analyze the supply chain for: {product}"
         if context:
