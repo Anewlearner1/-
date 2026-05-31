@@ -1,4 +1,6 @@
+import useStockInfo from '@/hooks/useStockInfo'
 import type { SupplyNode } from '@/lib/api'
+import StockSection from './StockSection'
 
 const RISK_BADGE: Record<string, string> = {
   low: 'bg-green-100 text-green-800',
@@ -12,6 +14,11 @@ interface Props {
 }
 
 export default function NodeDetailPanel({ node, onClose }: Props) {
+  const { data: stocks, loading: stocksLoading, error: stocksError } = useStockInfo(
+    node?.label ?? '',
+    node?.description ?? ''
+  )
+
   if (!node) return null
 
   return (
@@ -46,6 +53,8 @@ export default function NodeDetailPanel({ node, onClose }: Props) {
         </div>
 
         <p className="text-gray-700">{node.description}</p>
+
+        <StockSection stocks={stocks} loading={stocksLoading} error={stocksError} />
       </div>
     </aside>
   )

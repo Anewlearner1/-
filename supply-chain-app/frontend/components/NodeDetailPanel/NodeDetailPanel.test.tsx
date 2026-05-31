@@ -1,6 +1,12 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import NodeDetailPanel from './index'
 
+jest.mock('@/hooks/useStockInfo', () => () => ({
+  data: null,
+  loading: false,
+  error: null,
+}))
+
 const mockNode = {
   id: '1',
   label: 'TSMC N3',
