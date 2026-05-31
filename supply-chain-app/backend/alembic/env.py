@@ -17,7 +17,13 @@ if config.config_file_name is not None:
 # add your model's MetaData object here
 # for 'autogenerate' support
 from app.models.user import Base as UserBase
-target_metadata = UserBase.metadata
+from app.models.analysis import Base as AnalysisBase
+from sqlalchemy import MetaData
+
+# Merge both metadata objects for autogenerate
+target_metadata = MetaData()
+for table in list(UserBase.metadata.tables.values()) + list(AnalysisBase.metadata.tables.values()):
+    table.tometadata(target_metadata)
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
