@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     tavily_api_key: str = ""
     alpha_vantage_api_key: str = ""
     secret_key: str = "change-me-in-production"
+    nextauth_secret: str = "change-me-in-production"
 
     model_config = {"env_file": ".env"}
 

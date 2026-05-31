@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class AnalysisRequest(BaseModel):
@@ -31,5 +31,5 @@ class Edge(BaseModel):
 
 
 class AnalysisResponse(BaseModel):
-    nodes: list[Node]
+    nodes: list[Node] = Field(min_length=1)
     edges: list[Edge]

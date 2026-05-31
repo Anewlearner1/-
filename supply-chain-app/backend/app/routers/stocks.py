@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from app.services.claude_service import ClaudeService
@@ -12,16 +12,24 @@ class StockSearchRequest(BaseModel):
     node_description: str = ""
 
 
-@router.post("/search")
-async def search_stocks(body: StockSearchRequest) -> list[dict]:
-    claude = ClaudeService()
-    tickers = await claude.identify_companies(body.node_label, body.node_description)
+def get_claude() -> ClaudeService:
+    return ClaudeService()
 
-    stock_svc = StockService()
+
+def get_stock_service() -> StockService:
+    return StockService()
+
+
+@router.post("/search")
+async def search_stocks(
+    body: StockSearchRequest,
+    claude: ClaudeService = Depends(get_claude),
+    stock_svc: StockService = Depends(get_stock_service),
+) -> list[dict]:
+    tickers = await claude.identify_companies(body.node_label, body.node_description)
     results = []
     for ticker in tickers:
         info = stock_svc.get_stock_info(ticker)
         if info:
             results.append(info)
-
     return results

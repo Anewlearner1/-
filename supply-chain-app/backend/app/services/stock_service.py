@@ -1,3 +1,4 @@
+import threading
 import time
 from typing import Any
 
@@ -10,18 +11,23 @@ SMALL_CAP_THRESHOLD = 2_000_000_000  # $2B USD
 CACHE_TTL_SECONDS = 300  # 5 minutes
 
 _price_cache: dict[str, tuple[dict, float]] = {}
+_cache_lock = threading.Lock()
 
 
 def _cached_get(ticker: str) -> dict | None:
     now = time.time()
-    if ticker in _price_cache:
-        data, ts = _price_cache[ticker]
-        if now - ts < CACHE_TTL_SECONDS:
-            return data
+    with _cache_lock:
+        if ticker in _price_cache:
+            data, ts = _price_cache[ticker]
+            if now - ts < CACHE_TTL_SECONDS:
+                return data
+
     info = yf.Ticker(ticker).info
     if not info or not info.get("symbol"):
         return None
-    _price_cache[ticker] = (info, now)
+
+    with _cache_lock:
+        _price_cache[ticker] = (info, now)
     return info
 
 
@@ -58,13 +64,13 @@ class StockService:
             )
             resp.raise_for_status()
             matches = resp.json().get("bestMatches", [])
-            return [
-                {
-                    "symbol": m["1. symbol"],
-                    "name": m["2. name"],
-                    "region": m["4. region"],
-                }
-                for m in matches
-            ]
+            results = []
+            for m in matches:
+                symbol = m.get("1. symbol", "")
+                name_val = m.get("2. name", "")
+                region = m.get("4. region", "")
+                if symbol:
+                    results.append({"symbol": symbol, "name": name_val, "region": region})
+            return results
         except Exception:
             return []
