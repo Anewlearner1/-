@@ -27,7 +27,7 @@ export async function GET(request: Request): Promise<Response> {
     })
     const pdf = await page.pdf({ format: 'A4', printBackground: true })
 
-    return new Response(pdf, {
+    return new Response(pdf.buffer as ArrayBuffer, {
       status: 200,
       headers: {
         'content-type': 'application/pdf',

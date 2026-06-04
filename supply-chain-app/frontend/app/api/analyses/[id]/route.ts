@@ -14,8 +14,9 @@ async function makeBackendToken(userId: string): Promise<string> {
 
 export async function GET(
   _request: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ): Promise<Response> {
+  const { id } = await params
   const session = await getServerSession(authOptions)
   if (!session?.user?.email) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), {
@@ -25,7 +26,7 @@ export async function GET(
   }
   const userId = (session as { userId?: string }).userId ?? session.user.email
   const token = await makeBackendToken(userId)
-  const backendRes = await fetch(`${BACKEND_URL}/api/v1/analyses/${params.id}`, {
+  const backendRes = await fetch(`${BACKEND_URL}/api/v1/analyses/${id}`, {
     headers: { Authorization: `Bearer ${token}` },
   })
   const data = await backendRes.json().catch(() => ({}))
@@ -37,8 +38,9 @@ export async function GET(
 
 export async function DELETE(
   _request: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ): Promise<Response> {
+  const { id } = await params
   const session = await getServerSession(authOptions)
   if (!session?.user?.email) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), {
@@ -48,7 +50,7 @@ export async function DELETE(
   }
   const userId = (session as { userId?: string }).userId ?? session.user.email
   const token = await makeBackendToken(userId)
-  const backendRes = await fetch(`${BACKEND_URL}/api/v1/analyses/${params.id}`, {
+  const backendRes = await fetch(`${BACKEND_URL}/api/v1/analyses/${id}`, {
     method: 'DELETE',
     headers: { Authorization: `Bearer ${token}` },
   })

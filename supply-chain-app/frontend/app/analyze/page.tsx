@@ -43,7 +43,8 @@ export default function AnalyzePage() {
       )}
 
       {result && (
-        <div className="mb-3 flex gap-2 print:hidden">
+        <>
+          <div className="mb-3 flex gap-2 print:hidden">
             <SaveButton
               product={currentProduct}
               treeJson={JSON.stringify(result)}
@@ -53,12 +54,13 @@ export default function AnalyzePage() {
               <ExportButton analysisId={analysisId} product={currentProduct} />
             )}
           </div>
-      <div className="mt-6 flex gap-4">
-          <div className="flex-1">
-            <SupplyChainGraph data={result} onNodeClick={selectNode} />
+          <div className="mt-6 flex gap-4">
+            <div className="flex-1">
+              <SupplyChainGraph data={result} onNodeClick={selectNode} />
+            </div>
+            <NodeDetailPanel node={selectedNode} onClose={clearNode} />
           </div>
-          <NodeDetailPanel node={selectedNode} onClose={clearNode} />
-        </div>
+        </>
       )}
     </main>
   )

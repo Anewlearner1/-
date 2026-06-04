@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     secret_key: str = "change-me-in-production"
     nextauth_secret: str = "change-me-in-production"
 
-    model_config = {"env_file": ".env"}
+    model_config = {"env_file": ["../.env", ".env"], "extra": "ignore"}
 
 
 settings = Settings()
