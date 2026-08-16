@@ -1,0 +1,1164 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>文獻分診台 LitDesk v1.0</title>
+<style>
+  :root{
+    --bg:#f7f6f3; --panel:#ffffff; --ink:#1c1b19; --muted:#6b6862;
+    --line:#e0ddd6; --accent:#8a4b2a; --accent-soft:#f0e6df;
+    --must:#7a2f2f; --skim:#7a5f1f; --skip:#5a5a5a;
+    --ok:#2f6b45; --err:#9b2c2c;
+    --radius:8px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#171614; --panel:#211f1c; --ink:#ece9e3; --muted:#9c968c;
+      --line:#38352f; --accent:#d99a70; --accent-soft:#312a25;
+      --must:#e08a8a; --skim:#d9c07a; --skip:#a0a0a0;
+      --ok:#7ec99a; --err:#e88a8a;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;
+       font-size:15px;line-height:1.6}
+  header{border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:20}
+  .wrap{max-width:1180px;margin:0 auto;padding:0 20px}
+  .brand{display:flex;align-items:baseline;gap:12px;padding:14px 0 10px}
+  .brand h1{font-size:19px;margin:0;letter-spacing:.02em}
+  .brand span{color:var(--muted);font-size:13px}
+  nav{display:flex;gap:4px;flex-wrap:wrap;padding-bottom:0}
+  nav button{background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);
+             padding:9px 14px;font-size:14px;cursor:pointer;font-family:inherit}
+  nav button.on{color:var(--ink);border-bottom-color:var(--accent);font-weight:600}
+  nav button .badge{background:var(--accent-soft);color:var(--accent);border-radius:10px;
+                    padding:1px 7px;font-size:11px;margin-left:5px;font-weight:600}
+  main{padding:22px 0 70px}
+  section{display:none}
+  section.on{display:block}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px;margin-bottom:14px}
+  h2{font-size:15px;margin:0 0 10px;letter-spacing:.02em}
+  h3{font-size:13px;margin:16px 0 6px;color:var(--muted);text-transform:none;letter-spacing:.04em}
+  p.hint{color:var(--muted);font-size:13px;margin:4px 0 10px}
+  textarea,input[type=text],input[type=password],select{
+    width:100%;background:var(--bg);color:var(--ink);border:1px solid var(--line);
+    border-radius:6px;padding:8px 10px;font-family:inherit;font-size:14px}
+  textarea{min-height:130px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;line-height:1.55}
+  button.btn{background:var(--accent);color:#fff;border:none;border-radius:6px;padding:8px 16px;
+             font-size:14px;cursor:pointer;font-family:inherit}
+  button.btn.ghost{background:none;color:var(--accent);border:1px solid var(--line)}
+  button.btn.danger{background:none;color:var(--err);border:1px solid var(--line)}
+  button.btn:disabled{opacity:.45;cursor:not-allowed}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .grow{flex:1;min-width:160px}
+  .progress{font-size:13px;color:var(--muted);margin-left:4px}
+  .verdict{display:inline-block;border-radius:4px;padding:1px 9px;font-size:12px;font-weight:700;border:1px solid currentColor}
+  .v-must{color:var(--must)} .v-skim{color:var(--skim)} .v-skip{color:var(--skip)}
+  .paper{border:1px solid var(--line);border-radius:var(--radius);background:var(--panel);padding:14px;margin-bottom:10px}
+  .paper.failed{border-left:3px solid var(--err)}
+  .paper h4{margin:0 0 4px;font-size:15px;font-weight:600;line-height:1.45}
+  .meta{color:var(--muted);font-size:13px;margin-bottom:8px;word-break:break-word}
+  dl.fields{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;margin:8px 0;font-size:13.5px}
+  dl.fields dt{color:var(--muted)}
+  dl.fields dd{margin:0}
+  .unavailable{color:var(--muted);font-style:italic}
+  .result-item{border-top:1px dashed var(--line);padding-top:6px;margin-top:6px;font-size:13.5px}
+  details.quote{margin-top:3px}
+  details.quote summary{cursor:pointer;color:var(--accent);font-size:12.5px}
+  details.quote blockquote{margin:5px 0 0;padding:6px 10px;border-left:2px solid var(--line);
+                           color:var(--muted);font-size:12.5px;background:var(--bg)}
+  .fail-msg{color:var(--err);font-size:13.5px}
+  .controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px;
+            border-top:1px solid var(--line);padding-top:10px}
+  .controls label{font-size:13px;color:var(--muted)}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  .tablewrap{overflow-x:auto}
+  th,td{border-bottom:1px solid var(--line);padding:7px 8px;text-align:left;vertical-align:top}
+  th{color:var(--muted);font-weight:600;white-space:nowrap;font-size:12.5px}
+  tbody tr:hover{background:var(--accent-soft)}
+  .empty{color:var(--muted);text-align:center;padding:28px;font-size:14px}
+  .conflict{border:1px solid var(--line);border-radius:6px;padding:10px 12px;margin-bottom:8px;background:var(--panel)}
+  .ctype{display:inline-block;font-size:12px;font-weight:700;border:1px solid currentColor;
+         border-radius:4px;padding:1px 8px;margin-right:8px}
+  .t-opp{color:var(--must)} .t-mag{color:var(--skim)} .t-inc{color:var(--accent)} .t-single{color:var(--skip)}
+  .refs{font-size:12.5px;color:var(--muted);margin-top:4px}
+  .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:26px;background:var(--ink);color:var(--bg);
+         padding:9px 18px;border-radius:6px;font-size:13.5px;z-index:60;max-width:88vw}
+  .warn{background:var(--accent-soft);border:1px solid var(--line);border-radius:6px;
+        padding:9px 12px;font-size:13px;color:var(--muted);margin-bottom:10px}
+  code{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;background:var(--bg);padding:1px 4px;border-radius:3px}
+  ul.plain{margin:4px 0;padding-left:20px;font-size:13.5px}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="brand"><h1>文獻分診台</h1><span>LitDesk v1.0 — 批次分診 · 累積入庫 · 交叉對質</span></div>
+    <nav>
+      <button data-tab="triage" class="on">批次分診</button>
+      <button data-tab="library">證據庫<span class="badge" id="libCount">0</span></button>
+      <button data-tab="conflict">對質台</button>
+      <button data-tab="settings">設定</button>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+
+<!-- ============ F1 批次分診 ============ -->
+<section id="tab-triage" class="on">
+  <div class="card">
+    <h2>貼上待分診文獻</h2>
+    <p class="hint">每行一筆。可混合 DOI、PubMed 連結、期刊網址、純標題。逐筆處理，單筆失敗不中斷整批。</p>
+    <textarea id="inputBox" placeholder="10.1056/NEJMoa2035389&#10;https://pubmed.ncbi.nlm.nih.gov/33301246/&#10;Effect of vitamin D supplementation on ICU length of stay"></textarea>
+    <div class="row" style="margin-top:10px">
+      <button class="btn" id="runBtn">開始分診</button>
+      <button class="btn ghost" id="stopBtn" disabled>停止</button>
+      <button class="btn ghost" id="clearBtn">清空結果</button>
+      <span class="progress" id="progress"></span>
+    </div>
+  </div>
+
+  <div id="triageResults"></div>
+
+  <div class="card" id="ingestBar" style="display:none">
+    <div class="row">
+      <button class="btn ghost" id="selectAllBtn">全選（不含跳過）</button>
+      <button class="btn ghost" id="selectNoneBtn">全不選</button>
+      <span class="grow"></span>
+      <button class="btn" id="ingestBtn">入庫勾選項目</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============ F3 證據庫 ============ -->
+<section id="tab-library">
+  <div class="card">
+    <h2>證據庫</h2>
+    <div class="row">
+      <input type="text" id="searchBox" class="grow" placeholder="搜尋標題／備註／標籤／族群／介入…">
+      <select id="filterVerdict" style="width:auto"><option value="">全部分診</option><option>必讀</option><option>略讀</option><option>跳過</option></select>
+      <select id="filterYear" style="width:auto"><option value="">全部年份</option></select>
+      <select id="filterTag" style="width:auto"><option value="">全部標籤</option></select>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button class="btn ghost" id="exportCsvBtn">匯出 CSV（UTF-8 BOM）</button>
+      <button class="btn ghost" id="exportMdBtn">匯出 Markdown</button>
+      <span class="grow"></span>
+      <span class="progress" id="libStat"></span>
+    </div>
+  </div>
+  <div class="card">
+    <div class="tablewrap"><table id="libTable">
+      <thead><tr>
+        <th></th><th>標題</th><th>年份</th><th>設計</th><th>n</th><th>分診</th>
+        <th>主要效果量</th><th>標籤</th><th>備註</th><th></th>
+      </tr></thead>
+      <tbody></tbody>
+    </table></div>
+    <div class="empty" id="libEmpty">證據庫是空的。先到「批次分診」處理幾篇。</div>
+  </div>
+</section>
+
+<!-- ============ F4 對質台 ============ -->
+<section id="tab-conflict">
+  <div class="card">
+    <h2>對質台</h2>
+    <p class="hint">在證據庫勾選 <strong>3–8 篇</strong>後產出矛盾點清單。這是列出分歧供人判斷的工具，不產出綜合結論、不做 vote counting、不合併效果量。</p>
+    <div class="row">
+      <span class="grow" id="selectedInfo">目前勾選 0 篇。</span>
+      <button class="btn" id="contradictBtn">產出矛盾點清單</button>
+    </div>
+  </div>
+  <div id="conflictOut"></div>
+</section>
+
+<!-- ============ 設定 ============ -->
+<section id="tab-settings">
+  <div class="card">
+    <h2>模型存取</h2>
+    <div class="warn">純前端、無後端。API key 只存在這台瀏覽器的本機儲存，直接送往 Anthropic API。若在共用電腦上使用，用完請按「清除金鑰」。</div>
+    <h3>Anthropic API key</h3>
+    <input type="password" id="apiKey" placeholder="sk-ant-…">
+    <div class="row" style="margin-top:8px">
+      <button class="btn ghost" id="saveKeyBtn">儲存金鑰</button>
+      <button class="btn danger" id="clearKeyBtn">清除金鑰</button>
+    </div>
+    <h3>模型</h3>
+    <select id="modelSel">
+      <option value="claude-opus-5">claude-opus-5（預設）</option>
+      <option value="claude-sonnet-5">claude-sonnet-5</option>
+    </select>
+    <h3>Effort</h3>
+    <select id="effortSel">
+      <option value="low">low</option>
+      <option value="medium" selected>medium</option>
+      <option value="high">high</option>
+    </select>
+    <p class="hint">分診每筆各自送一次請求（不合併，避免 token 超限與交叉污染），並啟用 web search 取得 metadata 與摘要。</p>
+  </div>
+  <div class="card">
+    <h2>資料</h2>
+    <div class="row">
+      <span class="grow" id="storageStat"></span>
+      <button class="btn danger" id="wipeBtn">清空整個證據庫</button>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<script>
+"use strict";
+/* =====================================================================
+   LitDesk v1.0 — 純前端單檔
+   儲存：單一鍵 litdesk:library 存整個陣列（避免逐筆讀寫觸發速率限制）
+   ===================================================================== */
+
+const LIB_KEY = 'litdesk:library';
+const CFG_KEY = 'litdesk:config';
+const VERDICTS = ['必讀', '略讀', '跳過'];
+const CONFLICT_TYPES = ['方向相反', '量級落差', '不可比', '單點證據'];
+const NA = '未取得';
+
+/* ---------------- 儲存層：window.storage 優先，否則 localStorage ------- */
+const Store = {
+  async get(key) {
+    if (typeof window.storage !== 'undefined' && window.storage) {
+      if (typeof window.storage.getItem === 'function') return await window.storage.getItem(key);
+      if (typeof window.storage.get === 'function') return await window.storage.get(key);
+    }
+    return localStorage.getItem(key);
+  },
+  async set(key, val) {
+    if (typeof window.storage !== 'undefined' && window.storage) {
+      if (typeof window.storage.setItem === 'function') return await window.storage.setItem(key, val);
+      if (typeof window.storage.set === 'function') return await window.storage.set(key, val);
+    }
+    localStorage.setItem(key, val);
+  }
+};
+
+/* ---------------- 工具函式（同時掛在 window.LitDesk 供測試） ---------- */
+
+function normalizeDoi(raw) {
+  if (!raw) return '';
+  let s = String(raw).trim().toLowerCase();
+  s = s.replace(/^https?:\/\/(dx\.)?doi\.org\//, '');
+  s = s.replace(/^doi:\s*/, '');
+  s = s.replace(/[.,;)\]]+$/, '');
+  return /^10\.\d{4,9}\//.test(s) ? s : '';
+}
+
+function parseInputLines(text) {
+  return String(text || '')
+    .split(/\r?\n/)
+    .map(s => s.trim())
+    .filter(s => s.length > 0);
+}
+
+/** 容錯 JSON 解析：去除程式碼圍欄、擷取首個 { 到末個 } */
+function extractJson(text) {
+  if (text == null) return null;
+  let s = String(text).trim();
+  s = s.replace(/^﻿/, '');
+  s = s.replace(/```(?:json|JSON)?\s*/g, '').replace(/```/g, '');
+  const first = s.indexOf('{');
+  const last = s.lastIndexOf('}');
+  if (first === -1 || last === -1 || last <= first) return null;
+  const slice = s.slice(first, last + 1);
+  try { return JSON.parse(slice); } catch (_) { /* fall through */ }
+  try { return JSON.parse(s); } catch (_) { return null; }
+}
+
+function str(v) {
+  if (v === null || v === undefined) return '';
+  const s = String(v).trim();
+  return s;
+}
+
+/** 有值就回傳，否則回傳「未取得」 */
+function orNA(v) {
+  const s = str(v);
+  if (!s || s === 'null' || s === 'undefined' || s === 'N/A' || s === '未知') return NA;
+  return s;
+}
+
+/**
+ * 反幻覺閘門：
+ *  - 沒有 source_quote 的數字一律視同「未取得」，不予顯示（PRD §6）
+ *  - completeness 為「僅標題」的紀錄一律不給效果量（PRD §10）
+ */
+function sanitizeResults(rawResults, completeness) {
+  if (!Array.isArray(rawResults)) return [];
+  if (completeness === '僅標題') return [];
+  const out = [];
+  for (const r of rawResults) {
+    if (!r || typeof r !== 'object') continue;
+    const quote = str(r.source_quote);
+    const outcome = str(r.outcome);
+    const effect = str(r.effect);
+    if (!outcome && !effect) continue;
+    if (!quote) continue;                       // 無來源句 → 丟棄整條
+    out.push({
+      outcome: orNA(outcome),
+      effect: orNA(effect),
+      ci: orNA(r.ci),
+      p: orNA(r.p),
+      source_quote: quote
+    });
+    if (out.length >= 3) break;                 // 資料模型上限 3 條
+  }
+  return out;
+}
+
+const FETCH_REASONS = {
+  not_found: '找不到',
+  paywalled: '付費牆',
+  not_research: '非研究論文'
+};
+
+/** 把模型回傳的原始物件規範化為資料模型 */
+function normalizeCard(obj, query) {
+  const o = obj && typeof obj === 'object' ? obj : {};
+  const doi = normalizeDoi(o.doi) || normalizeDoi(query);
+  let completeness = str(o.completeness);
+  if (!['全文摘要', '僅標題', '部分'].includes(completeness)) completeness = '部分';
+
+  const status = str(o.fetch_status);
+  const failed = ['not_found', 'paywalled', 'not_research'].includes(status);
+
+  let verdict = str(o.verdict);
+  if (!VERDICTS.includes(verdict)) verdict = '跳過';
+  if (failed) verdict = '跳過';
+  if (completeness === '僅標題') verdict = '跳過';   // 僅取得標題 → 跳過（PRD 分診規則）
+
+  const results = sanitizeResults(o.results, completeness);
+
+  return {
+    id: doi || ('ts:' + Date.now() + ':' + Math.random().toString(36).slice(2, 8)),
+    query: query,
+    doi: doi,
+    title: orNA(o.title),
+    journal: orNA(o.journal),
+    year: orNA(o.year),
+    design: orNA(o.design),
+    n: orNA(o.n),
+    population: orNA(o.population),
+    intervention: orNA(o.intervention),
+    comparator: orNA(o.comparator),
+    results: results,
+    verdict: verdict,
+    level: orNA(o.level),
+    completeness: completeness,
+    verdict_overridden: false,
+    source_url: str(o.source_url),
+    tags: [],
+    note: '',
+    added_at: '',
+    failed: failed,
+    fail_reason: failed ? FETCH_REASONS[status] : '',
+    fail_detail: failed ? str(o.fetch_note) : ''
+  };
+}
+
+/* ---------------- 匯出 ---------------- */
+
+function csvCell(v) {
+  const s = (v === null || v === undefined) ? '' : String(v);
+  return '"' + s.replace(/"/g, '""') + '"';
+}
+
+const CSV_HEADERS = ['標題','年份','期刊','研究設計','n','分診','實證等級','族群','介入','對照',
+  '主要指標','效果量','CI','p','其他結果','標籤','備註','DOI','資料完整度','分診已覆寫','加入時間'];
+
+/** UTF-8 BOM + CRLF：Windows Excel 直接開啟中文不亂碼（AC-5） */
+function toCSV(rows) {
+  const lines = [CSV_HEADERS.map(csvCell).join(',')];
+  for (const r of rows) {
+    const r0 = r.results[0] || {};
+    const rest = r.results.slice(1)
+      .map(x => `${x.outcome}: ${x.effect}${x.ci !== NA ? ' (' + x.ci + ')' : ''}${x.p !== NA ? ' p=' + x.p : ''}`)
+      .join(' | ');
+    lines.push([
+      r.title, r.year, r.journal, r.design, r.n, r.verdict, r.level, r.population,
+      r.intervention, r.comparator,
+      r0.outcome || NA, r0.effect || NA, r0.ci || NA, r0.p || NA, rest,
+      (r.tags || []).join('; '), r.note, r.doi, r.completeness,
+      r.verdict_overridden ? '是' : '否', r.added_at
+    ].map(csvCell).join(','));
+  }
+  return '﻿' + lines.join('\r\n') + '\r\n';
+}
+
+function toMarkdown(rows) {
+  const head = ['標題','年份','設計','n','分診','主要效果量','標籤','備註'];
+  const esc = v => String(v === null || v === undefined ? '' : v).replace(/\|/g, '\\|').replace(/\n/g, ' ');
+  const out = ['| ' + head.join(' | ') + ' |', '| ' + head.map(() => '---').join(' | ') + ' |'];
+  for (const r of rows) {
+    const r0 = r.results[0];
+    const eff = r0 ? `${r0.outcome}: ${r0.effect}${r0.ci !== NA ? ' (' + r0.ci + ')' : ''}` : NA;
+    out.push('| ' + [r.title, r.year, r.design, r.n, r.verdict, eff,
+      (r.tags || []).join('; '), r.note].map(esc).join(' | ') + ' |');
+  }
+  return out.join('\n') + '\n';
+}
+
+/* ---------------- 搜尋／篩選 ---------------- */
+
+function filterLibrary(lib, { q = '', verdict = '', year = '', tag = '' } = {}) {
+  const needle = String(q || '').trim().toLowerCase();
+  return lib.filter(r => {
+    if (verdict && r.verdict !== verdict) return false;
+    if (year && String(r.year) !== String(year)) return false;
+    if (tag && !(r.tags || []).includes(tag)) return false;
+    if (!needle) return true;
+    const hay = [r.title, r.note, (r.tags || []).join(' '), r.population, r.intervention]
+      .join(' ').toLowerCase();
+    return hay.includes(needle);
+  });
+}
+
+/* ---------------- Prompt 契約 ---------------- */
+
+const P1_SYSTEM = `你是文獻分診助手。使用者給你一筆文獻識別資訊（DOI、連結或標題），你要用 web search 找到該篇文獻的 metadata 與摘要，然後輸出結構化 JSON。
+
+絕對規則：
+1. 只輸出 JSON，無前言、無說明、無 markdown 程式碼圍欄。
+2. 任何欄位若在取得的文本中找不到，一律填「未取得」。嚴禁推測或杜撰任何數字、樣本數、效果量。
+3. results 中每一條都必須附上 source_quote：來源文本的原文片段（逐字，不改寫）。無法附上原文片段的數字，不要輸出該條。
+4. results 最多 3 條，挑最主要的結果指標。
+5. 繁體中文作答，但統計量與專有名詞保留英文（如 RCT、HR、OR、SMD、95% CI、p）。
+6. 各欄位精簡，不要長篇敘述。
+
+fetch_status 用來標記取得狀態：
+- "ok"：找到文獻且至少取得摘要
+- "not_found"：搜尋不到這篇文獻
+- "paywalled"：找得到書目但摘要被付費牆擋住，只拿得到標題
+- "not_research"：這不是原始研究論文（社論、評論、新聞、勘誤、書評等）
+
+completeness：
+- "全文摘要"：取得完整摘要
+- "部分"：只取得部分資訊
+- "僅標題"：只拿得到標題
+
+verdict 分診規則（照這個判，不要自由發揮）：
+- "必讀"：設計層級足以支撐結論，且主要結果有可用的效果量。
+- "略讀"：結論可能有用，但設計或樣本使可信度受限。
+- "跳過"：非原始研究、樣本過小、無對照、指標與需求無關，或僅取得標題。
+
+輸出格式（嚴格遵守鍵名）：
+{"doi":"","title":"","journal":"","year":"","design":"","n":"","population":"","intervention":"","comparator":"","results":[{"outcome":"","effect":"","ci":"","p":"","source_quote":""}],"verdict":"必讀|略讀|跳過","level":"","completeness":"全文摘要|僅標題|部分","fetch_status":"ok|not_found|paywalled|not_research","fetch_note":"","source_url":""}`;
+
+const P2_SYSTEM = `你是文獻對質助手。使用者給你數篇已入庫文獻的精簡欄位，每篇有一個篇號（ref）。你的工作是列出這些文獻之間的分歧，供人判斷。
+
+這是列出分歧供人判斷的工具，不是產出結論的工具。
+
+絕對禁止：
+- 不做綜合結論，不建議「整體而言應該如何」。
+- 不做 vote counting，不數幾篇支持、幾篇反對。
+- 不對效果量取平均，不做任何未經方法學前提的合併。
+- 每個矛盾點都必須標出處篇號（refs）。無法標註篇號的一律不要輸出。
+- 只依據使用者給的文本作答。看不出來就填「文中未提」。嚴禁補充文本以外的數字。
+
+分歧分類（type 只能是這四種之一）：
+- "方向相反"：甲篇有效、乙篇無效或反向。
+- "量級落差"：方向一致但效果量差距大到會影響臨床決策。
+- "不可比"：族群、劑量、測量工具或追蹤時長不同，表面矛盾其實問的不是同一件事。
+- "單點證據"：只有一篇提到，無從對照。
+
+「可觀察差異」只陳述各篇在樣本、劑量、測量工具、追蹤長度、對照設計上的實際差異，不得宣稱哪個差異造成了矛盾。
+「沉默區」列出這批文獻共同沒有回答的問題。
+
+繁體中文，統計量與專有名詞保留英文。只輸出 JSON，無前言、無 markdown 圍欄。
+
+輸出格式：
+{"axes":[{"axis":"比較軸名稱","rows":[{"ref":1,"value":"該篇在此軸的數值","direction":"有利|無效|不利|文中未提"}]}],"conflicts":[{"type":"方向相反|量級落差|不可比|單點證據","axis":"","refs":[1,2],"detail":""}],"differences":[{"ref":1,"items":["樣本：…","劑量：…","測量工具：…","追蹤：…","對照：…"]}],"silence":["這批文獻共同未回答的問題"]}`;
+
+function buildP2Input(rows) {
+  return rows.map((r, i) => {
+    const res = r.results.length
+      ? r.results.map(x => `${x.outcome} = ${x.effect}${x.ci !== NA ? ' (95% CI ' + x.ci + ')' : ''}${x.p !== NA ? ', p=' + x.p : ''}`).join('；')
+      : '未取得';
+    return [
+      `[ref ${i + 1}]`,
+      `標題：${r.title}`,
+      `年份：${r.year}｜期刊：${r.journal}`,
+      `設計：${r.design}｜n：${r.n}｜實證等級：${r.level}`,
+      `族群：${r.population}`,
+      `介入：${r.intervention}｜對照：${r.comparator}`,
+      `結果：${res}`,
+      `資料完整度：${r.completeness}`
+    ].join('\n');
+  }).join('\n\n');
+}
+
+/* ---------------- 模型呼叫層 ---------------- */
+/* 可被 window.LitDeskLLM 覆寫（測試與其他 runtime 用）。
+   預設走 Anthropic Messages API + web search server tool。 */
+
+const API_URL = 'https://api.anthropic.com/v1/messages';
+
+function textOf(content) {
+  if (!Array.isArray(content)) return '';
+  return content.filter(b => b && b.type === 'text').map(b => b.text || '').join('\n');
+}
+
+async function callAnthropic({ system, user, tools, maxTokens }) {
+  const cfg = getConfig();
+  if (!cfg.apiKey) throw new Error('尚未設定 API key。到「設定」分頁填入後再試。');
+
+  let messages = [{ role: 'user', content: user }];
+  let lastContent = null;
+
+  // 伺服端工具可能回 pause_turn，需重送續跑；上限 5 次避免無限迴圈。
+  for (let i = 0; i < 6; i++) {
+    const body = {
+      model: cfg.model,
+      // max_tokens 同時涵蓋 thinking 與回應文字。Opus 5 預設開啟 adaptive thinking，
+      // 加上 web search 的往返，1000 會在思考階段就被截斷 —— 故放寬額度，
+      // 改以 results 上限 3 條與「各欄位精簡」控制輸出長度。
+      max_tokens: maxTokens || 8000,
+      system: system,
+      messages: messages,
+      output_config: { effort: cfg.effort }
+    };
+    if (tools) body.tools = tools;
+
+    const resp = await fetch(API_URL, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': cfg.apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify(body)
+    });
+
+    if (!resp.ok) {
+      let msg = resp.status + ' ' + resp.statusText;
+      try { const e = await resp.json(); if (e && e.error && e.error.message) msg = e.error.message; } catch (_) {}
+      throw new Error('API 錯誤：' + msg);
+    }
+    const data = await resp.json();
+    lastContent = data.content;
+
+    if (data.stop_reason === 'pause_turn') {
+      messages = [{ role: 'user', content: user }, { role: 'assistant', content: data.content }];
+      continue;
+    }
+    if (data.stop_reason === 'refusal') throw new Error('模型拒絕處理這筆請求。');
+    if (data.stop_reason === 'max_tokens') throw new Error('回應超出長度上限，這筆未完成。');
+    return textOf(data.content);
+  }
+  return textOf(lastContent);
+}
+
+const DefaultLLM = {
+  async triage(query) {
+    const raw = await callAnthropic({
+      system: P1_SYSTEM,
+      user: `請分診這一筆：\n${query}`,
+      tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 6 }]
+    });
+    const obj = extractJson(raw);
+    if (!obj) throw new Error('模型回應無法解析為 JSON。');
+    return obj;
+  },
+  async contradict(rows) {
+    const raw = await callAnthropic({
+      system: P2_SYSTEM,
+      user: `以下是 ${rows.length} 篇已入庫文獻：\n\n${buildP2Input(rows)}`,
+      maxTokens: 12000
+    });
+    const obj = extractJson(raw);
+    if (!obj) throw new Error('模型回應無法解析為 JSON。');
+    return obj;
+  }
+};
+
+function llm() { return window.LitDeskLLM || DefaultLLM; }
+
+/* ---------------- 應用狀態 ---------------- */
+
+const state = {
+  cards: [],        // 分診結果（尚未入庫）
+  library: [],
+  selected: new Set(),
+  running: false,
+  stopRequested: false,
+  config: { apiKey: '', model: 'claude-opus-5', effort: 'medium' }
+};
+
+function getConfig() { return state.config; }
+
+async function loadConfig() {
+  try {
+    const raw = await Store.get(CFG_KEY);
+    if (raw) Object.assign(state.config, JSON.parse(raw));
+  } catch (_) {}
+  $('#apiKey').value = state.config.apiKey || '';
+  $('#modelSel').value = state.config.model || 'claude-opus-5';
+  $('#effortSel').value = state.config.effort || 'medium';
+}
+async function saveConfig() {
+  try { await Store.set(CFG_KEY, JSON.stringify(state.config)); }
+  catch (e) { toast('設定未存檔：' + e.message); }
+}
+
+async function loadLibrary() {
+  try {
+    const raw = await Store.get(LIB_KEY);
+    state.library = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(state.library)) state.library = [];
+  } catch (e) {
+    state.library = [];
+    toast('證據庫讀取失敗，本次以空庫開始：' + e.message);
+  }
+}
+
+/** 單鍵批次寫入；失敗時明確告知使用者本次未存檔（PRD §6） */
+async function saveLibrary() {
+  try {
+    await Store.set(LIB_KEY, JSON.stringify(state.library));
+    const bytes = new Blob([JSON.stringify(state.library)]).size;
+    if (bytes > 3.5 * 1024 * 1024) {
+      toast('證據庫已接近儲存上限，建議先匯出 CSV 備份。');
+    }
+    return true;
+  } catch (e) {
+    toast('⚠ 存檔失敗，本次變更未寫入儲存空間：' + e.message);
+    return false;
+  }
+}
+
+/* ---------------- DOM 小工具 ---------------- */
+
+function $(sel, root) { return (root || document).querySelector(sel); }
+function $$(sel, root) { return Array.from((root || document).querySelectorAll(sel)); }
+function el(tag, attrs, ...kids) {
+  const n = document.createElement(tag);
+  if (attrs) for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'class') n.className = v;
+    else if (k === 'text') n.textContent = v;
+    else if (k.startsWith('on')) n.addEventListener(k.slice(2), v);
+    else n.setAttribute(k, v);
+  }
+  for (const kid of kids) {
+    if (kid === null || kid === undefined || kid === false) continue;
+    n.appendChild(typeof kid === 'string' ? document.createTextNode(kid) : kid);
+  }
+  return n;
+}
+let toastTimer = null;
+function toast(msg) {
+  const old = $('.toast'); if (old) old.remove();
+  const t = el('div', { class: 'toast', text: msg });
+  document.body.appendChild(t);
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.remove(), 5200);
+}
+
+function verdictSpan(v) {
+  const cls = v === '必讀' ? 'v-must' : v === '略讀' ? 'v-skim' : 'v-skip';
+  return el('span', { class: 'verdict ' + cls, text: v });
+}
+function fieldValue(v) {
+  return v === NA ? el('span', { class: 'unavailable', text: NA }) : el('span', { text: v });
+}
+
+/* ---------------- F1 渲染 ---------------- */
+
+function renderCards() {
+  const box = $('#triageResults');
+  box.textContent = '';
+  $('#ingestBar').style.display = state.cards.length ? '' : 'none';
+
+  state.cards.forEach((c, idx) => {
+    const node = el('div', { class: 'paper' + (c.failed ? ' failed' : '') });
+
+    if (c.failed) {
+      node.appendChild(el('h4', { text: c.title !== NA ? c.title : c.query }));
+      node.appendChild(el('div', { class: 'meta', text: '輸入：' + c.query }));
+      const nextStep = c.fail_reason === '付費牆'
+        ? '要判斷請改貼摘要全文。'
+        : c.fail_reason === '找不到'
+          ? '請確認 DOI／連結是否正確，或改貼完整標題。'
+          : '這筆不是原始研究論文，分診台不處理。';
+      node.appendChild(el('div', { class: 'fail-msg',
+        text: `✕ ${c.fail_reason}${c.fail_detail ? '：' + c.fail_detail : ''}　${nextStep}` }));
+      box.appendChild(node);
+      return;
+    }
+
+    node.appendChild(el('h4', { text: c.title }));
+    const meta = el('div', { class: 'meta' });
+    meta.appendChild(document.createTextNode(
+      [c.journal, c.year].filter(x => x && x !== NA).join('，') || '書目資訊未取得'));
+    if (c.doi) meta.appendChild(document.createTextNode('　DOI: ' + c.doi));
+    if (c.source_url) {
+      meta.appendChild(document.createTextNode('　'));
+      meta.appendChild(el('a', { href: c.source_url, target: '_blank', rel: 'noopener', text: '來源連結' }));
+    }
+    node.appendChild(meta);
+
+    const dl = el('dl', { class: 'fields' });
+    const pairs = [['分診', null], ['實證等級', c.level], ['研究設計', c.design], ['n', c.n],
+                   ['族群', c.population], ['介入', c.intervention], ['對照', c.comparator],
+                   ['資料完整度', c.completeness]];
+    for (const [k, v] of pairs) {
+      dl.appendChild(el('dt', { text: k }));
+      dl.appendChild(el('dd', {}, k === '分診' ? verdictSpan(c.verdict) : fieldValue(v)));
+    }
+    node.appendChild(dl);
+
+    if (c.results.length) {
+      node.appendChild(el('h3', { text: '主要結果' }));
+      for (const r of c.results) {
+        const item = el('div', { class: 'result-item' });
+        const line = `${r.outcome}：${r.effect}` +
+          (r.ci !== NA ? `（95% CI ${r.ci}）` : '') + (r.p !== NA ? `，p=${r.p}` : '');
+        item.appendChild(el('div', { text: line }));
+        const d = el('details', { class: 'quote' });
+        d.appendChild(el('summary', { text: '來源句' }));
+        d.appendChild(el('blockquote', { text: r.source_quote }));
+        item.appendChild(d);
+        node.appendChild(item);
+      }
+    } else {
+      node.appendChild(el('div', { class: 'unavailable',
+        text: c.completeness === '僅標題'
+          ? '只取得標題，依規則不顯示效果量。要判斷請改貼摘要全文。'
+          : '無附來源句的效果量，依規則不顯示。' }));
+    }
+
+    // ---- 入庫控制列（可手動覆寫分診結果、加備註與標籤）----
+    const ctr = el('div', { class: 'controls' });
+    const cb = el('input', { type: 'checkbox', id: 'pick' + idx });
+    cb.checked = c._picked !== undefined ? c._picked : (c.verdict !== '跳過');
+    c._picked = cb.checked;
+    cb.addEventListener('change', () => { c._picked = cb.checked; });
+    ctr.appendChild(cb);
+    ctr.appendChild(el('label', { for: 'pick' + idx, text: '入庫' }));
+
+    const sel = el('select', { style: 'width:auto' });
+    for (const v of VERDICTS) {
+      const o = el('option', { value: v, text: v });
+      if (v === c.verdict) o.selected = true;
+      sel.appendChild(o);
+    }
+    sel.addEventListener('change', () => {
+      c.verdict_overridden = sel.value !== c._originalVerdict;
+      c.verdict = sel.value;
+      renderCards();
+    });
+    ctr.appendChild(el('label', { text: '覆寫分診' }));
+    ctr.appendChild(sel);
+
+    const note = el('input', { type: 'text', placeholder: '一行私人備註', style: 'flex:1;min-width:150px' });
+    note.value = c.note || '';
+    note.addEventListener('input', () => { c.note = note.value; });
+    ctr.appendChild(note);
+
+    const tags = el('input', { type: 'text', placeholder: '標籤（逗號分隔）', style: 'width:170px' });
+    tags.value = (c.tags || []).join(',');
+    tags.addEventListener('input', () => {
+      c.tags = tags.value.split(/[,，]/).map(s => s.trim()).filter(Boolean);
+    });
+    ctr.appendChild(tags);
+
+    node.appendChild(ctr);
+    box.appendChild(node);
+  });
+}
+
+/* ---------------- F1 批次執行 ---------------- */
+
+async function runTriage() {
+  if (state.running) return;
+  const queries = parseInputLines($('#inputBox').value);
+  if (!queries.length) { toast('輸入框是空的。'); return; }
+
+  state.running = true;
+  state.stopRequested = false;
+  $('#runBtn').disabled = true;
+  $('#stopBtn').disabled = false;
+
+  for (let i = 0; i < queries.length; i++) {
+    if (state.stopRequested) {
+      $('#progress').textContent = `已停止（完成 ${i} / ${queries.length} 筆，結果保留）`;
+      break;
+    }
+    $('#progress').textContent = `處理中：第 ${i + 1} / ${queries.length} 筆`;
+    const q = queries[i];
+    let card;
+    try {
+      const obj = await llm().triage(q);
+      card = normalizeCard(obj, q);
+    } catch (e) {
+      // 單筆失敗不中斷整批（AC-1）
+      card = normalizeCard({ fetch_status: 'not_found', fetch_note: e.message, title: q }, q);
+      card.fail_reason = '找不到';
+      card.fail_detail = e.message;
+    }
+    card._originalVerdict = card.verdict;
+    state.cards.push(card);
+    renderCards();
+  }
+
+  if (!state.stopRequested) {
+    $('#progress').textContent = `完成 ${queries.length} 筆。`;
+  }
+  state.running = false;
+  $('#runBtn').disabled = false;
+  $('#stopBtn').disabled = true;
+}
+
+/* ---------------- F2 入庫 ---------------- */
+
+async function ingest() {
+  const picked = state.cards.filter(c => c._picked && !c.failed);
+  if (!picked.length) { toast('沒有勾選任何可入庫的項目。'); return; }
+
+  let added = 0, updated = 0, skipped = 0;
+  for (const c of picked) {
+    const rec = JSON.parse(JSON.stringify(c));
+    delete rec._picked; delete rec._originalVerdict;
+    rec.added_at = new Date().toISOString().slice(0, 19).replace('T', ' ');
+
+    const existingIdx = rec.doi ? state.library.findIndex(x => x.doi && x.doi === rec.doi) : -1;
+    if (existingIdx >= 0) {
+      const ok = confirm(`這篇已在證據庫中：\n${state.library[existingIdx].title}\n\n按「確定」更新，按「取消」略過。`);
+      if (ok) { state.library[existingIdx] = rec; updated++; } else { skipped++; }
+    } else {
+      state.library.push(rec);
+      added++;
+    }
+  }
+  const ok = await saveLibrary();
+  state.cards = state.cards.filter(c => !picked.includes(c));
+  renderCards();
+  renderLibrary();
+  if (ok) toast(`入庫完成：新增 ${added}、更新 ${updated}、略過 ${skipped}。`);
+}
+
+/* ---------------- F3 證據庫渲染 ---------------- */
+
+function currentFilters() {
+  return {
+    q: $('#searchBox').value,
+    verdict: $('#filterVerdict').value,
+    year: $('#filterYear').value,
+    tag: $('#filterTag').value
+  };
+}
+
+function refreshFilterOptions() {
+  const years = Array.from(new Set(state.library.map(r => r.year).filter(y => y && y !== NA))).sort().reverse();
+  const tags = Array.from(new Set(state.library.flatMap(r => r.tags || []))).sort();
+  for (const [sel, list] of [['#filterYear', years], ['#filterTag', tags]]) {
+    const node = $(sel);
+    const cur = node.value;
+    node.textContent = '';
+    node.appendChild(el('option', { value: '', text: sel === '#filterYear' ? '全部年份' : '全部標籤' }));
+    for (const v of list) node.appendChild(el('option', { value: v, text: v }));
+    if (list.includes(cur)) node.value = cur;
+  }
+}
+
+function renderLibrary() {
+  $('#libCount').textContent = String(state.library.length);
+  refreshFilterOptions();
+  const rows = filterLibrary(state.library, currentFilters());
+  const tbody = $('#libTable tbody');
+  tbody.textContent = '';
+  $('#libEmpty').style.display = state.library.length ? 'none' : '';
+  $('#libTable').style.display = state.library.length ? '' : 'none';
+  $('#libStat').textContent = `顯示 ${rows.length} / 共 ${state.library.length} 篇`;
+
+  for (const r of rows) {
+    const tr = el('tr');
+    const cb = el('input', { type: 'checkbox' });
+    cb.checked = state.selected.has(r.id);
+    cb.addEventListener('change', () => {
+      if (cb.checked) state.selected.add(r.id); else state.selected.delete(r.id);
+      updateSelectedInfo();
+    });
+    tr.appendChild(el('td', {}, cb));
+    tr.appendChild(el('td', {}, el('div', { text: r.title }),
+      r.doi ? el('div', { class: 'meta', text: r.doi }) : null));
+    tr.appendChild(el('td', { text: r.year }));
+    tr.appendChild(el('td', { text: r.design }));
+    tr.appendChild(el('td', { text: r.n }));
+    tr.appendChild(el('td', {}, verdictSpan(r.verdict), r.verdict_overridden ? el('div', { class: 'meta', text: '已覆寫' }) : null));
+    const r0 = r.results[0];
+    tr.appendChild(el('td', { text: r0 ? `${r0.outcome}: ${r0.effect}${r0.ci !== NA ? ' (' + r0.ci + ')' : ''}` : NA }));
+    tr.appendChild(el('td', { text: (r.tags || []).join('、') }));
+    tr.appendChild(el('td', { text: r.note || '' }));
+    tr.appendChild(el('td', {}, el('button', {
+      class: 'btn danger', text: '刪除',
+      onclick: async () => {
+        if (!confirm('刪除這一筆？')) return;
+        state.library = state.library.filter(x => x.id !== r.id);
+        state.selected.delete(r.id);
+        await saveLibrary();
+        renderLibrary(); updateSelectedInfo();
+      }
+    })));
+    tbody.appendChild(tr);
+  }
+  updateStorageStat();
+}
+
+function updateStorageStat() {
+  const bytes = new Blob([JSON.stringify(state.library)]).size;
+  $('#storageStat').textContent = `證據庫 ${state.library.length} 筆，約 ${(bytes / 1024).toFixed(1)} KB（單一鍵 ${LIB_KEY}）`;
+}
+
+function updateSelectedInfo() {
+  const n = state.selected.size;
+  $('#selectedInfo').textContent = n < 3
+    ? `目前勾選 ${n} 篇。對質台需要至少 3 篇。`
+    : n > 8 ? `目前勾選 ${n} 篇。單批上限 8 篇，請減少後再試。`
+            : `目前勾選 ${n} 篇，可以開始對質。`;
+  $('#contradictBtn').disabled = n < 3 || n > 8;
+}
+
+/* ---------------- F4 對質台 ---------------- */
+
+function typeClass(t) {
+  return t === '方向相反' ? 't-opp' : t === '量級落差' ? 't-mag'
+       : t === '不可比' ? 't-inc' : 't-single';
+}
+
+/** 每個矛盾點必須標出處篇號，無法標註的一律不輸出（PRD §5 F4） */
+function sanitizeConflicts(raw, count) {
+  if (!raw || typeof raw !== 'object') return null;
+  const conflicts = (Array.isArray(raw.conflicts) ? raw.conflicts : [])
+    .map(c => ({
+      type: CONFLICT_TYPES.includes(str(c && c.type)) ? str(c.type) : '不可比',
+      axis: str(c && c.axis),
+      detail: str(c && c.detail),
+      refs: (Array.isArray(c && c.refs) ? c.refs : [])
+        .map(n => parseInt(n, 10))
+        .filter(n => Number.isInteger(n) && n >= 1 && n <= count)
+    }))
+    .filter(c => c.refs.length > 0 && (c.detail || c.axis));
+
+  const axes = (Array.isArray(raw.axes) ? raw.axes : []).map(a => ({
+    axis: str(a && a.axis),
+    rows: (Array.isArray(a && a.rows) ? a.rows : [])
+      .map(r => ({ ref: parseInt(r && r.ref, 10), value: orNA(r && r.value), direction: str(r && r.direction) }))
+      .filter(r => Number.isInteger(r.ref) && r.ref >= 1 && r.ref <= count)
+  })).filter(a => a.axis && a.rows.length);
+
+  const differences = (Array.isArray(raw.differences) ? raw.differences : [])
+    .map(d => ({
+      ref: parseInt(d && d.ref, 10),
+      items: (Array.isArray(d && d.items) ? d.items : []).map(str).filter(Boolean)
+    }))
+    .filter(d => Number.isInteger(d.ref) && d.ref >= 1 && d.ref <= count && d.items.length);
+
+  const silence = (Array.isArray(raw.silence) ? raw.silence : []).map(str).filter(Boolean);
+  return { axes, conflicts, differences, silence };
+}
+
+async function runContradict() {
+  const rows = state.library.filter(r => state.selected.has(r.id));
+  if (rows.length < 3 || rows.length > 8) { toast('請勾選 3–8 篇。'); return; }
+
+  const out = $('#conflictOut');
+  out.textContent = '';
+  out.appendChild(el('div', { class: 'card' }, el('div', { class: 'progress', text: '對質中…' })));
+  $('#contradictBtn').disabled = true;
+
+  let data;
+  try {
+    data = sanitizeConflicts(await llm().contradict(rows), rows.length);
+  } catch (e) {
+    out.textContent = '';
+    out.appendChild(el('div', { class: 'card' }, el('div', { class: 'fail-msg', text: '對質失敗：' + e.message })));
+    $('#contradictBtn').disabled = false;
+    return;
+  }
+  $('#contradictBtn').disabled = false;
+  out.textContent = '';
+  if (!data) {
+    out.appendChild(el('div', { class: 'card' }, el('div', { class: 'fail-msg', text: '模型回應無法解析。' })));
+    return;
+  }
+
+  // 篇號對照
+  const legend = el('div', { class: 'card' });
+  legend.appendChild(el('h2', { text: '篇號對照' }));
+  const ol = el('ol', { class: 'plain' });
+  rows.forEach(r => ol.appendChild(el('li', { text: `${r.title}（${r.year}，${r.design}，n=${r.n}）` })));
+  legend.appendChild(ol);
+  out.appendChild(legend);
+
+  // 1. 比較軸
+  const axesCard = el('div', { class: 'card' });
+  axesCard.appendChild(el('h2', { text: '1. 比較軸' }));
+  if (!data.axes.length) {
+    axesCard.appendChild(el('div', { class: 'unavailable', text: '這幾篇沒有共同觸及的比較軸。' }));
+  } else {
+    for (const a of data.axes) {
+      axesCard.appendChild(el('h3', { text: a.axis }));
+      const wrap = el('div', { class: 'tablewrap' });
+      const t = el('table');
+      const thead = el('thead');
+      thead.appendChild(el('tr', {}, el('th', { text: '篇號' }), el('th', { text: '數值' }), el('th', { text: '方向' })));
+      t.appendChild(thead);
+      const tb = el('tbody');
+      for (const r of a.rows) {
+        tb.appendChild(el('tr', {}, el('td', { text: '[' + r.ref + ']' }),
+          el('td', { text: r.value }), el('td', { text: r.direction || '文中未提' })));
+      }
+      t.appendChild(tb);
+      wrap.appendChild(t);
+      axesCard.appendChild(wrap);
+    }
+  }
+  out.appendChild(axesCard);
+
+  // 2. 分歧分類
+  const cCard = el('div', { class: 'card' });
+  cCard.appendChild(el('h2', { text: '2. 矛盾點清單' }));
+  if (!data.conflicts.length) {
+    cCard.appendChild(el('div', { class: 'unavailable', text: '沒有可標註出處的矛盾點。' }));
+  } else {
+    for (const c of data.conflicts) {
+      const node = el('div', { class: 'conflict' });
+      const head = el('div');
+      head.appendChild(el('span', { class: 'ctype ' + typeClass(c.type), text: c.type }));
+      if (c.axis) head.appendChild(el('span', { text: c.axis }));
+      node.appendChild(head);
+      if (c.detail) node.appendChild(el('div', { text: c.detail, style: 'margin-top:4px' }));
+      node.appendChild(el('div', { class: 'refs', text: '出處：' + c.refs.map(n => '[' + n + ']').join('、') }));
+      cCard.appendChild(node);
+    }
+  }
+  out.appendChild(cCard);
+
+  // 3. 可觀察差異
+  const dCard = el('div', { class: 'card' });
+  dCard.appendChild(el('h2', { text: '3. 可觀察差異' }));
+  dCard.appendChild(el('p', { class: 'hint', text: '只陳述差異，不宣稱哪個差異造成了矛盾。' }));
+  if (!data.differences.length) {
+    dCard.appendChild(el('div', { class: 'unavailable', text: '文中未提足以比較的差異。' }));
+  } else {
+    for (const d of data.differences) {
+      dCard.appendChild(el('h3', { text: '[' + d.ref + ']' }));
+      const ul = el('ul', { class: 'plain' });
+      for (const it of d.items) ul.appendChild(el('li', { text: it }));
+      dCard.appendChild(ul);
+    }
+  }
+  out.appendChild(dCard);
+
+  // 4. 沉默區
+  const sCard = el('div', { class: 'card' });
+  sCard.appendChild(el('h2', { text: '4. 沉默區' }));
+  if (!data.silence.length) {
+    sCard.appendChild(el('div', { class: 'unavailable', text: '文中未提。' }));
+  } else {
+    const ul = el('ul', { class: 'plain' });
+    for (const s of data.silence) ul.appendChild(el('li', { text: s }));
+    sCard.appendChild(ul);
+  }
+  out.appendChild(sCard);
+}
+
+/* ---------------- 下載 ---------------- */
+
+function download(filename, text, mime) {
+  const blob = new Blob([text], { type: (mime || 'text/plain') + ';charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = el('a', { href: url, download: filename });
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/* ---------------- 事件綁定 ---------------- */
+
+function bind() {
+  $$('nav button').forEach(b => b.addEventListener('click', () => {
+    $$('nav button').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    $$('main section').forEach(s => s.classList.remove('on'));
+    $('#tab-' + b.dataset.tab).classList.add('on');
+  }));
+
+  $('#runBtn').addEventListener('click', runTriage);
+  $('#stopBtn').addEventListener('click', () => { state.stopRequested = true; toast('停止中，目前這一筆跑完就停。'); });
+  $('#clearBtn').addEventListener('click', () => { state.cards = []; $('#progress').textContent = ''; renderCards(); });
+  $('#selectAllBtn').addEventListener('click', () => {
+    state.cards.forEach(c => { c._picked = !c.failed && c.verdict !== '跳過'; }); renderCards();
+  });
+  $('#selectNoneBtn').addEventListener('click', () => { state.cards.forEach(c => { c._picked = false; }); renderCards(); });
+  $('#ingestBtn').addEventListener('click', ingest);
+
+  ['#searchBox', '#filterVerdict', '#filterYear', '#filterTag'].forEach(s =>
+    $(s).addEventListener('input', renderLibrary));
+  $('#exportCsvBtn').addEventListener('click', () => {
+    const rows = filterLibrary(state.library, currentFilters());
+    if (!rows.length) { toast('沒有可匯出的資料。'); return; }
+    download('litdesk.csv', toCSV(rows), 'text/csv');
+  });
+  $('#exportMdBtn').addEventListener('click', () => {
+    const rows = filterLibrary(state.library, currentFilters());
+    if (!rows.length) { toast('沒有可匯出的資料。'); return; }
+    download('litdesk.md', toMarkdown(rows), 'text/markdown');
+  });
+
+  $('#contradictBtn').addEventListener('click', runContradict);
+
+  $('#saveKeyBtn').addEventListener('click', async () => {
+    state.config.apiKey = $('#apiKey').value.trim();
+    state.config.model = $('#modelSel').value;
+    state.config.effort = $('#effortSel').value;
+    await saveConfig(); toast('已儲存。');
+  });
+  $('#clearKeyBtn').addEventListener('click', async () => {
+    state.config.apiKey = ''; $('#apiKey').value = ''; await saveConfig(); toast('金鑰已清除。');
+  });
+  $('#modelSel').addEventListener('change', async () => { state.config.model = $('#modelSel').value; await saveConfig(); });
+  $('#effortSel').addEventListener('change', async () => { state.config.effort = $('#effortSel').value; await saveConfig(); });
+
+  $('#wipeBtn').addEventListener('click', async () => {
+    if (!confirm('這會刪掉整個證據庫，且無法復原。確定？')) return;
+    state.library = []; state.selected.clear();
+    await saveLibrary(); renderLibrary(); updateSelectedInfo(); toast('已清空。');
+  });
+}
+
+/* ---------------- 啟動 ---------------- */
+
+async function boot() {
+  bind();
+  await loadConfig();
+  await loadLibrary();
+  renderCards();
+  renderLibrary();
+  updateSelectedInfo();
+  window.LitDeskReady = true;
+  document.dispatchEvent(new CustomEvent('litdesk:ready'));
+}
+
+/* 測試用公開介面（純函式與狀態存取） */
+window.LitDesk = {
+  normalizeDoi, parseInputLines, extractJson, normalizeCard, sanitizeResults,
+  sanitizeConflicts, filterLibrary, toCSV, toMarkdown, buildP2Input,
+  state, renderLibrary, updateSelectedInfo, saveLibrary, loadLibrary,
+  NA, LIB_KEY
+};
+
+document.addEventListener('DOMContentLoaded', boot);
+</script>
+</body>
+</html>
