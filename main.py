@@ -24,6 +24,7 @@ from datetime import datetime, time as dtime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import envfile  # noqa: F401 — 必須在其他專案模組之前，先載入 .env
 from agent import run_analysis
 from notifier import send_report, send_error, send_startup
 

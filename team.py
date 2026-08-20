@@ -7,10 +7,13 @@
     python team.py 2330.TW --no-cross-exam      # 只跑第一輪（省成本）
     python team.py --list-team                  # 看團隊成員背景卡
 
-需要的環境變數：
-    ANTHROPIC_API_KEY    — Anthropic API key（或先跑過 `ant auth login`）
+預設不需要 API key —— 走本機已登入的 Claude Code CLI（吃你的 Claude 訂閱額度）：
+    npm install -g @anthropic-ai/claude-code
+    claude login
 
-選用：
+選用環境變數：
+    TEAM_BACKEND         — claude_cli（預設，免 API key）| api（用 ANTHROPIC_API_KEY）
+    TEAM_MODEL           — 模型；claude_cli 用別名如 opus，api 用完整 ID
     TEAM_EFFORT          — low | medium | high | xhigh | max（預設 high）
     REPORT_DIR           — 報告輸出目錄（預設 ./reports）
 """
@@ -21,6 +24,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+import envfile  # noqa: F401 — 必須在其他專案模組之前，先載入 .env
 from discussion import run_discussion
 from personas import ANALYSTS, DISCLAIMER
 

@@ -11,39 +11,21 @@
 主理人不由 AI 擔任 — 本引擎只到「建議」為止，拍板由使用者自己來。
 """
 import json
-import os
-import sys
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-
-import anthropic
 
 from analyzer import analyze_symbol
 from fetcher import (
     SECTOR_MAP, fetch_market_breadth, fetch_stock_info,
     fetch_taiex_summary, fetch_yfinance_data,
 )
+from backends import ask_many, describe as describe_backend, preflight
 from personas import (
     ANALYSTS, ANALYSTS_BY_ID, DISCLAIMER, VOTE_WEIGHTS,
     build_persona_system_prompt,
 )
 
-MODEL = "claude-opus-5"
-MAX_TOKENS = 16000
-EFFORT = os.environ.get("TEAM_EFFORT", "high")  # low | medium | high | xhigh | max
-
 STANCE_VALUE = {"BUY": 1.0, "HOLD": 0.0, "SELL": -1.0}
 CONSENSUS_THRESHOLD = 0.25  # 團隊分數超過 ±0.25 才算方向明確
-
-_client: anthropic.Anthropic | None = None
-
-
-def _get_client() -> anthropic.Anthropic:
-    global _client
-    if _client is None:
-        _client = anthropic.Anthropic()
-    return _client
-
 
 # --------------------------------------------------------------------------
 # 結構化輸出 schema
@@ -221,33 +203,8 @@ def format_packet(packet: dict) -> str:
 
 
 # --------------------------------------------------------------------------
-# LLM 呼叫
+# 提示詞
 # --------------------------------------------------------------------------
-
-def _ask(analyst: dict, messages: list, schema: dict) -> tuple[dict, dict]:
-    """對單一分析師發出一次結構化請求，回傳 (解析後的 JSON, usage)。"""
-    client = _get_client()
-    response = client.messages.create(
-        model=MODEL,
-        max_tokens=MAX_TOKENS,
-        system=build_persona_system_prompt(analyst),
-        messages=messages,
-        thinking={"type": "adaptive"},
-        output_config={
-            "effort": EFFORT,
-            "format": {"type": "json_schema", "schema": schema},
-        },
-        cache_control={"type": "ephemeral"},
-    )
-    text = next(b.text for b in response.content if b.type == "text")
-    usage = {
-        "input_tokens": response.usage.input_tokens,
-        "output_tokens": response.usage.output_tokens,
-        "cache_read": response.usage.cache_read_input_tokens,
-        "cache_created": response.usage.cache_creation_input_tokens,
-    }
-    return json.loads(text), usage
-
 
 def _round1_prompt(packet_text: str) -> str:
     return "\n".join([
@@ -397,19 +354,17 @@ def aggregate(final_calls: dict, symbols: list[str]) -> dict:
 # 主流程
 # --------------------------------------------------------------------------
 
-def _run_parallel(fn, items: list) -> dict:
-    with ThreadPoolExecutor(max_workers=len(items)) as pool:
-        return dict(pool.map(fn, items))
-
-
 def run_discussion(symbols: list[str], period: str = "1mo",
                    interval: str = "1d", cross_examine: bool = True) -> dict:
     """跑完一場完整的投資團隊討論，回傳結構化結果。"""
+    preflight()
+
     started = datetime.now()
     print(f"\n{'=' * 64}")
     print(f"  投資團隊會議  {started.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"  主理人：使用者本人｜分析師：{len(ANALYSTS)} 位（完全平權）")
     print(f"  標的：{', '.join(symbols)}")
+    print(f"  後端：{describe_backend()}")
     print(f"{'=' * 64}")
 
     packet = build_market_packet(symbols, period=period, interval=interval)
@@ -417,25 +372,31 @@ def run_discussion(symbols: list[str], period: str = "1mo",
     usages: list[dict] = []
 
     # ---- Round 1：各自獨立發言 ----
-    print(f"\n  [R1] 五位分析師獨立發言中（平行呼叫，model={MODEL}, effort={EFFORT}）...")
+    print("\n  [R1] 五位分析師獨立發言中（平行呼叫）...")
+    r1_prompt = _round1_prompt(packet_text)
+    replies = ask_many([
+        {
+            "key": a["id"],
+            "label": a["name"],
+            "system": build_persona_system_prompt(a),
+            "messages": [{"role": "user", "content": r1_prompt}],
+            "schema": ROUND1_SCHEMA,
+        }
+        for a in ANALYSTS
+    ])
+
+    round1: dict[str, dict] = {}
     histories: dict[str, list] = {}
-
-    def _r1(analyst: dict):
-        prompt = _round1_prompt(packet_text)
-        try:
-            result, usage = _ask(analyst, [{"role": "user", "content": prompt}], ROUND1_SCHEMA)
-            usages.append(usage)
-            histories[analyst["id"]] = [
-                {"role": "user", "content": prompt},
-                {"role": "assistant", "content": json.dumps(result, ensure_ascii=False)},
-            ]
-            sys.stdout.write(f"       ✓ {analyst['name']} 發言完成\n")
-            return analyst["id"], result
-        except Exception as e:
-            sys.stdout.write(f"       ✗ {analyst['name']} 失敗 — {e}\n")
-            return analyst["id"], {"error": str(e)}
-
-    round1 = _run_parallel(_r1, ANALYSTS)
+    for aid, (data, usage, error) in replies.items():
+        usages.append(usage)
+        if error is not None:
+            round1[aid] = {"error": str(error)}
+            continue
+        round1[aid] = data
+        histories[aid] = [
+            {"role": "user", "content": r1_prompt},
+            {"role": "assistant", "content": json.dumps(data, ensure_ascii=False)},
+        ]
 
     if not cross_examine:
         final = {
@@ -449,28 +410,32 @@ def run_discussion(symbols: list[str], period: str = "1mo",
     else:
         # ---- Round 2：交叉質詢 ----
         print("\n  [R2] 交叉質詢與立場修正中...")
+        pending = [a for a in ANALYSTS if a["id"] in histories]
+        replies = ask_many([
+            {
+                "key": a["id"],
+                "label": a["name"],
+                "system": build_persona_system_prompt(a),
+                "messages": histories[a["id"]] + [
+                    {"role": "user", "content": _round2_prompt(_format_peer_notes(round1, a["id"]))},
+                ],
+                "schema": ROUND2_SCHEMA,
+            }
+            for a in pending
+        ]) if pending else {}
 
-        def _r2(analyst: dict):
-            aid = analyst["id"]
-            if aid not in histories:
-                return aid, {"error": "第一輪失敗，跳過第二輪"}
-            prompt = _round2_prompt(_format_peer_notes(round1, aid))
-            try:
-                result, usage = _ask(
-                    analyst, histories[aid] + [{"role": "user", "content": prompt}],
-                    ROUND2_SCHEMA,
-                )
-                usages.append(usage)
-                changed = sum(1 for c in result["revised_calls"] if c.get("changed"))
-                sys.stdout.write(f"       ✓ {analyst['name']} 質詢 "
-                                 f"{len(result['challenges'])} 則，修正 {changed} 檔\n")
-                return aid, result
-            except Exception as e:
-                sys.stdout.write(f"       ✗ {analyst['name']} 失敗 — {e}\n")
-                return aid, {"error": str(e)}
-
-        round2 = _run_parallel(_r2, ANALYSTS)
+        round2 = {a["id"]: {"error": "第一輪失敗，跳過第二輪"}
+                  for a in ANALYSTS if a["id"] not in histories}
+        for aid, (data, usage, error) in replies.items():
+            usages.append(usage)
+            round2[aid] = {"error": str(error)} if error is not None else data
         final = round2
+
+        for aid, r in round2.items():
+            if "error" not in r:
+                changed = sum(1 for c in r["revised_calls"] if c.get("changed"))
+                print(f"       · {ANALYSTS_BY_ID[aid]['name']}："
+                      f"質詢 {len(r['challenges'])} 則，修正 {changed} 檔")
 
     # ---- 平權加總 ----
     print("\n  [彙總] 完全平權加總五人評分...")
@@ -485,16 +450,16 @@ def run_discussion(symbols: list[str], period: str = "1mo",
               f"票數 B{c['votes']['BUY']}/H{c['votes']['HOLD']}/S{c['votes']['SELL']}）{flag}")
 
     total_usage = {
-        "api_calls": len(usages),
+        "llm_calls": len(usages),
         "input_tokens": sum(u["input_tokens"] for u in usages),
         "output_tokens": sum(u["output_tokens"] for u in usages),
         "cache_read": sum(u["cache_read"] for u in usages),
         "cache_created": sum(u["cache_created"] for u in usages),
+        "cost_usd": round(sum(u.get("cost_usd", 0.0) for u in usages), 4),
     }
     print(f"\n  [完成] 耗時 {(datetime.now() - started).total_seconds():.0f}s｜"
-          f"API 呼叫 {total_usage['api_calls']} 次｜"
-          f"輸入 {total_usage['input_tokens']} / 輸出 {total_usage['output_tokens']} tokens｜"
-          f"快取讀取 {total_usage['cache_read']}")
+          f"呼叫 {total_usage['llm_calls']} 次｜"
+          f"輸入 {total_usage['input_tokens']} / 輸出 {total_usage['output_tokens']} tokens")
 
     return {
         "meeting_time": started.isoformat(),
@@ -502,8 +467,7 @@ def run_discussion(symbols: list[str], period: str = "1mo",
         "moderator": "使用者本人（AI 不代為拍板）",
         "voting_rule": "完全平權：五人一人一票，以信心度加權後取平均",
         "rounds": ["opening", "cross_examination"] if cross_examine else ["opening"],
-        "model": MODEL,
-        "effort": EFFORT,
+        "backend": describe_backend(),
         "analysts": [
             {"id": a["id"], "name": a["name"], "school": a["school"]} for a in ANALYSTS
         ],

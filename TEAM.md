@@ -5,9 +5,13 @@
 
 ## 快速開始
 
+**不需要 API key** —— 走你本機已登入的 Claude Code CLI，吃現有的 Claude 訂閱額度。
+完整安裝步驟見 [INSTALL.md](INSTALL.md)。
+
 ```bash
 pip install -r requirements.txt
-export ANTHROPIC_API_KEY=sk-ant-...
+npm install -g @anthropic-ai/claude-code
+claude login
 
 python team.py --list-team              # 看五位分析師的完整背景卡
 python team.py 2330.TW 2454.TW          # 開一場會
@@ -45,9 +49,21 @@ Round 2  每人讀完其他四人的論點 → 具體質詢 → 可修正自己�
 完全平權加總 → 團隊共識 / 分歧度 / 決策建議書 JSON
 ```
 
-一場會 = 10 次 API 呼叫（5 人 × 2 輪，同一人的第二輪沿用第一輪的快取前綴）。
-`--no-cross-exam` 降到 5 次。模型為 `claude-opus-5`，可用 `TEAM_EFFORT`
-環境變數調 `low`/`medium`/`high`/`xhigh`/`max`（預設 `high`）。
+一場會 = 10 次模型呼叫（5 人 × 2 輪），`--no-cross-exam` 降到 5 次。
+實測單一標的、`TEAM_EFFORT=low` 約 2.5 分鐘跑完。
+
+## 執行後端
+
+| `TEAM_BACKEND` | 認證方式 | 計費 |
+|---|---|---|
+| `claude_cli`（預設） | 本機 `claude login` 的訂閱登入 | 吃 Claude 訂閱額度，不需 API key |
+| `api` | `ANTHROPIC_API_KEY` | Messages API 按 token 計費 |
+
+兩個後端共用同一份 json_schema，輸出結構完全相同。
+`TEAM_EFFORT` 可調 `low`/`medium`/`high`（預設）/`xhigh`/`max`；
+`TEAM_MODEL` 可換模型（`claude_cli` 用 `opus`、`sonnet` 這類別名）。
+
+輸出裡的 `usage.cost_usd` 在訂閱模式下是**額度換算的參考值**，不是實際扣款金額。
 
 ## 評分加總規則
 
@@ -69,6 +85,7 @@ Round 2  每人讀完其他四人的論點 → 具體質詢 → 可修正自己�
   "meeting_time": "...",
   "moderator": "使用者本人（AI 不代為拍板）",
   "voting_rule": "完全平權：五人一人一票，以信心度加權後取平均",
+  "backend": "claude_cli（Claude 訂閱登入，免 API key，model=opus, effort=high）",
   "consensus": {
     "2330.TW": {
       "team_stance": "BUY",
@@ -100,7 +117,9 @@ Round 2  每人讀完其他四人的論點 → 具體質詢 → 可修正自己�
 |---|---|
 | `personas.py` | 五張背景卡、system prompt 組裝、平權權重表 |
 | `discussion.py` | 資料包組裝、兩輪辯論引擎、結構化 schema、平權加總 |
+| `backends.py` | LLM 後端切換（訂閱登入 / API key）、平行呼叫、JSON 解析 |
 | `team.py` | 命令列進入點、決策建議書列印、JSON 存檔 |
+| `envfile.py` | 載入 `.env`（必須在其他模組之前匯入） |
 
 沿用既有的 `fetcher.py`（抓價量與基本面）與 `analyzer.py`（技術指標），
 不影響原本 `main.py` 的每小時大盤分析流程。
