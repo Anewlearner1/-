@@ -21,6 +21,16 @@ from concurrent.futures import ThreadPoolExecutor
 BACKEND = os.environ.get("TEAM_BACKEND", "claude_cli").lower()
 EFFORT = os.environ.get("TEAM_EFFORT", "high")  # low | medium | high | xhigh | max
 
+# 同一台機器上的多個 claude 行程共用同一份登入，並協調 token 續期。
+# 若五個行程同時冷啟動而登入剛好需要續期，舊版 CLI 會發生續期競態並讓
+# 儲存的登入被撤銷（出現 "OAuth access token has been revoked"）。
+# 錯開啟動時間讓第一個行程先完成續期，其餘再接上已更新的 token。
+SERIAL = os.environ.get("TEAM_SERIAL", "0") == "1"   # 完全序列執行，最保險但最慢
+STAGGER_SECONDS = float(os.environ.get("TEAM_STAGGER", "2.0"))
+
+# 修掉並行續期競態的 CLI 版本
+MIN_CLI_VERSION = (2, 1, 211)
+
 # claude_cli 用別名（由已登入的 CLI 解析成實際模型）；api 用完整模型 ID
 CLI_MODEL = os.environ.get("TEAM_MODEL", "opus")
 API_MODEL = os.environ.get("TEAM_MODEL", "claude-opus-5")
@@ -34,7 +44,9 @@ class BackendError(RuntimeError):
 def describe() -> str:
     if BACKEND == "api":
         return f"api（ANTHROPIC_API_KEY，model={API_MODEL}, effort={EFFORT}）"
-    return f"claude_cli（Claude 訂閱登入，免 API key，model={CLI_MODEL}, effort={EFFORT}）"
+    mode = "序列" if SERIAL else f"平行，錯開 {STAGGER_SECONDS:g}s"
+    return (f"claude_cli（Claude 訂閱登入，免 API key，model={CLI_MODEL}, "
+            f"effort={EFFORT}, {mode}）")
 
 
 # --------------------------------------------------------------------------
@@ -91,6 +103,19 @@ def _empty_usage() -> dict:
 # 後端一：claude_cli（Claude 訂閱登入，免 API key）
 # --------------------------------------------------------------------------
 
+def _cli_version() -> tuple[int, ...] | None:
+    """讀出 claude --version 的版本號，讀不到就回 None（不擋執行）。"""
+    import re
+    import subprocess
+    try:
+        out = subprocess.run(["claude", "--version"], capture_output=True,
+                             text=True, timeout=20).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = re.search(r"(\d+)\.(\d+)\.(\d+)", out)
+    return tuple(int(g) for g in m.groups()) if m else None
+
+
 def _preflight_cli() -> None:
     if shutil.which("claude") is None:
         raise BackendError(
@@ -105,6 +130,17 @@ def _preflight_cli() -> None:
         raise BackendError(
             "缺少 claude-agent-sdk 套件，請執行：pip install -r requirements.txt"
         ) from e
+
+    version = _cli_version()
+    if version is not None and version < MIN_CLI_VERSION and not SERIAL:
+        ver = ".".join(str(v) for v in version)
+        want = ".".join(str(v) for v in MIN_CLI_VERSION)
+        sys.stdout.write(
+            f"  [警告] claude CLI {ver} 低於 {want}，多個行程同時續期 token 時\n"
+            f"         可能導致登入被撤銷（OAuth access token has been revoked）。\n"
+            f"         建議升級：npm install -g @anthropic-ai/claude-code\n"
+            f"         或先用序列模式執行：team.py --serial\n"
+        )
 
 
 def _flatten(messages: list[dict]) -> str:
@@ -166,7 +202,9 @@ async def _ask_cli(req: dict) -> tuple[dict, dict]:
 
 
 async def _ask_many_cli(requests: list[dict], on_done) -> dict:
-    async def one(req):
+    async def one(req, delay: float):
+        if delay:
+            await asyncio.sleep(delay)
         try:
             data, usage = await _ask_cli(req)
             on_done(req, None)
@@ -175,7 +213,13 @@ async def _ask_many_cli(requests: list[dict], on_done) -> dict:
             on_done(req, e)
             return req["key"], (None, _empty_usage(), e)
 
-    return dict(await asyncio.gather(*(one(r) for r in requests)))
+    if SERIAL:
+        return dict([await one(r, 0) for r in requests])
+
+    # 錯開啟動，避免多個 claude 行程同時搶著續期同一份登入
+    return dict(await asyncio.gather(
+        *(one(r, i * STAGGER_SECONDS) for i, r in enumerate(requests))
+    ))
 
 
 # --------------------------------------------------------------------------

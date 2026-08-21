@@ -13,6 +13,8 @@
 
 選用環境變數：
     TEAM_BACKEND         — claude_cli（預設，免 API key）| api（用 ANTHROPIC_API_KEY）
+    TEAM_SERIAL          — 設 1 等同 --serial
+    TEAM_STAGGER         — 平行啟動的間隔秒數（預設 2.0）
     TEAM_MODEL           — 模型；claude_cli 用別名如 opus，api 用完整 ID
     TEAM_EFFORT          — low | medium | high | xhigh | max（預設 high）
     REPORT_DIR           — 報告輸出目錄（預設 ./reports）
@@ -25,6 +27,7 @@ from datetime import datetime
 from pathlib import Path
 
 import envfile  # noqa: F401 — 必須在其他專案模組之前，先載入 .env
+import backends
 from discussion import run_discussion
 from personas import ANALYSTS, DISCLAIMER
 
@@ -102,6 +105,9 @@ def main() -> int:
                         help="K 棒間隔（預設 1d；可用 1h/1d/1wk）")
     parser.add_argument("--no-cross-exam", action="store_true",
                         help="跳過第二輪交叉質詢，只跑第一輪（約省一半成本）")
+    parser.add_argument("--serial", action="store_true",
+                        help="五位分析師改為一個一個跑。慢很多，但完全避開多個 "
+                             "claude 行程同時續期登入的競態（登入被撤銷時先用這個）")
     parser.add_argument("--list-team", action="store_true",
                         help="列出團隊成員背景卡後結束")
     args = parser.parse_args()
@@ -112,6 +118,9 @@ def main() -> int:
 
     if not args.symbols:
         parser.error("請指定至少一檔標的，例如：python team.py 2330.TW 2454.TW")
+
+    if args.serial:
+        backends.SERIAL = True
 
     result = run_discussion(
         args.symbols,

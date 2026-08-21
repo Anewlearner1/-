@@ -71,6 +71,7 @@ python team.py 2330.TW              # 真的開一場會
 python team.py 2330.TW 2454.TW      # 一次討論多檔
 python team.py 2330.TW --period 3mo # 拉長取樣區間
 python team.py 2330.TW --no-cross-exam   # 只跑第一輪，速度與額度減半
+python team.py 2330.TW --serial     # 五人一個一個跑（登入不穩時用）
 TEAM_EFFORT=medium python team.py 2330.TW  # 降低思考強度，更省更快
 ```
 
@@ -87,6 +88,8 @@ cp .env.example .env
 | `TEAM_BACKEND` | `claude_cli`（預設，免 API key）或 `api` |
 | `TEAM_EFFORT` | `low` / `medium` / `high`（預設）/ `xhigh` / `max` |
 | `TEAM_MODEL` | 模型；`claude_cli` 用別名如 `opus`、`sonnet` |
+| `TEAM_SERIAL` | 設 `1` 等同 `--serial` |
+| `TEAM_STAGGER` | 平行啟動的間隔秒數，預設 `2.0` |
 | `REPORT_DIR` | 報告輸出目錄，預設 `./reports` |
 | `ANTHROPIC_API_KEY` | 只有 `TEAM_BACKEND=api` 或跑 `main.py` 才需要 |
 
@@ -98,8 +101,33 @@ cp .env.example .env
 CLI 沒裝或不在 PATH。重跑 `npm install -g @anthropic-ai/claude-code`，
 並確認 `npm bin -g` 的路徑有加進 PATH。
 
+**`Please run /login` / `OAuth access token has been revoked` / 401 authentication_error**
+
+本機 Claude Code 的登入被撤銷了。乾淨重驗最可靠：在 `claude` 裡跑 `/logout`，
+關掉，重開 `claude` 再登入一次。之後用 `/status` 確認目前的驗證方式。
+
+一個容易忽略的成因：**同一台機器上多個 claude 行程同時續期登入**會發生競態，
+舊版 CLI 會因此把儲存的登入撤銷（`team.py` 預設同時開五個行程，正踩在這上面）。
+處置：
+
+```bash
+claude --version                              # 低於 2.1.211 就升級
+npm install -g @anthropic-ai/claude-code
+python team.py 2330.TW --serial               # 或先用序列模式，完全避開競態
+```
+
+`team.py` 平行模式預設把五個行程錯開 2 秒啟動（`TEAM_STAGGER` 可調），
+讓第一個行程先完成續期。CLI 版本低於 2.1.211 時開會前會出現警告。
+
+另外確認沒有殘留的舊金鑰蓋掉訂閱登入 —— 有的話 `unset ANTHROPIC_API_KEY`，
+並清掉 `~/.zshrc`、`~/.bashrc`、`~/.profile` 裡的 `export ANTHROPIC_API_KEY=...`：
+
+```bash
+echo "$ANTHROPIC_API_KEY"    # 應該是空的
+```
+
 **`Claude CLI 沒有回傳結果訊息（可能是登入過期）`**
-重跑 `claude login`。
+同上，重新登入一次。
 
 **`技術面：資料不足` 或基本面抓取失敗**
 yfinance 或 twse.com.tw 連不上（防火牆、公司網路、代理伺服器）。
