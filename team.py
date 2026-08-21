@@ -49,6 +49,22 @@ def _print_team() -> None:
     print(f"\n※ {DISCLAIMER}\n")
 
 
+def _dump_packet(symbols: list[str], period: str, interval: str) -> int:
+    """只抓資料、不呼叫模型，把資料包存成 JSON。"""
+    from discussion import build_market_packet, format_packet
+
+    packet = build_market_packet(symbols, period=period, interval=interval)
+    REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    path = REPORT_DIR / f"packet_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    path.write_text(json.dumps(packet, ensure_ascii=False, indent=2, default=str),
+                    encoding="utf-8")
+
+    print(format_packet(packet))
+    print(f"\n  [輸出] 資料包已存至 {path}")
+    print("  用法：python team.py --packet " + str(path))
+    return 0
+
+
 def _save(result: dict) -> Path:
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -108,6 +124,11 @@ def main() -> int:
     parser.add_argument("--serial", action="store_true",
                         help="五位分析師改為一個一個跑。慢很多，但完全避開多個 "
                              "claude 行程同時續期登入的競態（登入被撤銷時先用這個）")
+    parser.add_argument("--dump-packet", action="store_true",
+                        help="只抓行情資料並存成 JSON 後結束，不呼叫任何模型。"
+                             "用於在有網路的機器上產出資料包，拿到別處開會")
+    parser.add_argument("--packet", metavar="FILE",
+                        help="改用既有的資料包 JSON 開會，完全不連網抓資料")
     parser.add_argument("--list-team", action="store_true",
                         help="列出團隊成員背景卡後結束")
     args = parser.parse_args()
@@ -116,7 +137,16 @@ def main() -> int:
         _print_team()
         return 0
 
-    if not args.symbols:
+    if args.dump_packet:
+        if not args.symbols:
+            parser.error("--dump-packet 需要指定標的，例如：--dump-packet 3037.TW")
+        return _dump_packet(args.symbols, args.period, args.interval)
+
+    packet = None
+    if args.packet:
+        packet = json.loads(Path(args.packet).read_text(encoding="utf-8"))
+        print(f"  [資料包] {args.packet} — 標的 {', '.join(packet['symbols'])}")
+    elif not args.symbols:
         parser.error("請指定至少一檔標的，例如：python team.py 2330.TW 2454.TW")
 
     if args.serial:
@@ -127,6 +157,7 @@ def main() -> int:
         period=args.period,
         interval=args.interval,
         cross_examine=not args.no_cross_exam,
+        packet=packet,
     )
 
     _print_brief(result)

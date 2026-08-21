@@ -355,9 +355,18 @@ def aggregate(final_calls: dict, symbols: list[str]) -> dict:
 # --------------------------------------------------------------------------
 
 def run_discussion(symbols: list[str], period: str = "1mo",
-                   interval: str = "1d", cross_examine: bool = True) -> dict:
-    """跑完一場完整的投資團隊討論，回傳結構化結果。"""
+                   interval: str = "1d", cross_examine: bool = True,
+                   packet: dict | None = None) -> dict:
+    """
+    跑完一場完整的投資團隊討論，回傳結構化結果。
+
+    packet 給定時就直接採用該資料包、不再抓行情 —— 供離線機器或回測使用
+    （可用 team.py --dump-packet 在有網路的機器上先產出）。
+    """
     preflight()
+
+    if packet is not None:
+        symbols = packet["symbols"]
 
     started = datetime.now()
     print(f"\n{'=' * 64}")
@@ -367,7 +376,10 @@ def run_discussion(symbols: list[str], period: str = "1mo",
     print(f"  後端：{describe_backend()}")
     print(f"{'=' * 64}")
 
-    packet = build_market_packet(symbols, period=period, interval=interval)
+    if packet is None:
+        packet = build_market_packet(symbols, period=period, interval=interval)
+    else:
+        print(f"  [資料] 使用既有資料包（擷取於 {packet.get('collected_at', '未知時間')}）")
     packet_text = format_packet(packet)
     usages: list[dict] = []
 
