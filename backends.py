@@ -26,7 +26,12 @@ EFFORT = os.environ.get("TEAM_EFFORT", "high")  # low | medium | high | xhigh | 
 # 儲存的登入被撤銷（出現 "OAuth access token has been revoked"）。
 # 錯開啟動時間讓第一個行程先完成續期，其餘再接上已更新的 token。
 SERIAL = os.environ.get("TEAM_SERIAL", "0") == "1"   # 完全序列執行，最保險但最慢
-STAGGER_SECONDS = float(os.environ.get("TEAM_STAGGER", "2.0"))
+
+try:
+    STAGGER_SECONDS = max(0.0, float(os.environ.get("TEAM_STAGGER", "2.0")))
+except ValueError:
+    sys.stdout.write(f"  [警告] TEAM_STAGGER={os.environ['TEAM_STAGGER']!r} 不是數字，改用預設 2.0\n")
+    STAGGER_SECONDS = 2.0
 
 # 修掉並行續期競態的 CLI 版本
 MIN_CLI_VERSION = (2, 1, 211)
@@ -307,6 +312,9 @@ def ask_many(requests: list[dict]) -> dict:
     回傳 {key: (結果 dict 或 None, 用量 dict, 例外或 None)}，
     單一分析師失敗不會中斷整場會議。
     """
+    if not requests:
+        return {}
+
     def on_done(req, error):
         mark = "✗" if error else "✓"
         tail = f" — {error}" if error else ""

@@ -83,12 +83,18 @@ def _print_brief(result: dict) -> None:
     for sym, c in result["consensus"].items():
         if "error" in c:
             print(f"\n■ {sym}：{c['error']}")
+            for x in c.get("excluded", []):
+                print(f"  ⚠ {x['name']}：{x['reason']}")
             continue
 
         print(f"\n■ {sym}　團隊共識：{c['team_stance']}"
               f"（分數 {c['team_score']:+.2f}｜平均信心 {c['avg_conviction']}/10）")
         print(f"  票數：買 {c['votes']['BUY']}／觀望 {c['votes']['HOLD']}／賣 {c['votes']['SELL']}"
-              f"｜分歧度 {c['dispersion']}")
+              f"｜計入 {c['voter_count']}/{c['expected_voters']} 人｜分歧度 {c['dispersion']}")
+        for x in c["excluded"]:
+            print(f"  ⚠ 未計入 — {x['name']}：{x['reason']}")
+        for w in c["data_warnings"]:
+            print(f"  ⚠ {w}")
         if c["target_price_range"]:
             tp = c["target_price_range"]
             print(f"  目標價區間：{tp['low']} ~ {tp['high']}（中位數 {tp['median']}）")
@@ -144,6 +150,8 @@ def main() -> int:
 
     packet = None
     if args.packet:
+        if args.symbols:
+            parser.error("--packet 已指定標的，請勿再於命令列給標的（會被忽略）")
         packet = json.loads(Path(args.packet).read_text(encoding="utf-8"))
         print(f"  [資料包] {args.packet} — 標的 {', '.join(packet['symbols'])}")
     elif not args.symbols:
@@ -165,6 +173,10 @@ def main() -> int:
     path = _save(result)
     print(f"\n  [輸出] 結構化 JSON 已存至 {path}")
 
+    # 全部標的都拿不到可用評分時以非 0 結束，讓排程或腳本能察覺
+    if all("error" in c for c in result["consensus"].values()):
+        print("  [失敗] 沒有任何標的取得可用的團隊評分")
+        return 1
     return 0
 
 

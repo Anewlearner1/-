@@ -11,6 +11,7 @@
 主理人不由 AI 擔任 — 本引擎只到「建議」為止，拍板由使用者自己來。
 """
 import json
+import statistics
 from datetime import datetime
 
 from analyzer import analyze_symbol
@@ -179,7 +180,9 @@ def format_packet(packet: dict) -> str:
                 f"- MACD：{_fmt(t.get('macd'))}／訊號線：{_fmt(t.get('macd_signal'))}／柱狀：{_fmt(t.get('macd_hist'))}",
                 f"- 布林：上 {_fmt(t.get('bb_upper'))}／中 {_fmt(t.get('bb_mid'))}／下 {_fmt(t.get('bb_lower'))}",
                 f"- 均線：MA5 {_fmt(t.get('sma5'))}｜MA20 {_fmt(t.get('sma20'))}",
-                f"- 區間高低：{_fmt(t.get('period_high'))} / {_fmt(t.get('period_low'))}",
+                f"- 區間高低：{_fmt(t.get('period_high'))} / {_fmt(t.get('period_low'))}"
+                f"（距高點 {_fmt(t.get('dist_from_high_pct'), '%')}、"
+                f"距低點 {_fmt(t.get('dist_from_low_pct'), '%')}）",
                 f"- 技術訊號：{'、'.join(t.get('signals', [])) or '無特殊訊號'}",
             ]
 
@@ -265,7 +268,55 @@ def _format_peer_notes(round1: dict, exclude_id: str) -> str:
 
 def _signed_score(call: dict) -> float:
     """把單一評分換算成 -1.0 ~ +1.0 的帶號分數。"""
-    return STANCE_VALUE.get(call["stance"], 0.0) * (call["conviction"] / 10.0)
+    return STANCE_VALUE[call["stance"]] * (call["conviction"] / 10.0)
+
+
+def _norm_symbol(value) -> str:
+    return str(value).strip().upper()
+
+
+def _find_call(calls: list, symbol: str, all_symbols: list[str]) -> dict | None:
+    """
+    在一位分析師的評分裡找出對應標的。
+
+    模型偶爾會把 3037.TW 寫成 3037，因此在不會與其他標的混淆的前提下，
+    允許比對「.」之前的代號主體 —— 找不到就回 None，由呼叫端記錄為未表態，
+    絕不可以靜默略過而讓平權的分母悄悄變小。
+    """
+    target = _norm_symbol(symbol)
+    for c in calls:
+        if _norm_symbol(c.get("symbol")) == target:
+            return c
+
+    base = target.split(".")[0]
+    if sum(1 for s in all_symbols if _norm_symbol(s).split(".")[0] == base) == 1:
+        for c in calls:
+            if _norm_symbol(c.get("symbol")).split(".")[0] == base:
+                return c
+    return None
+
+
+def _sanitize_call(call: dict) -> tuple[dict | None, str | None]:
+    """
+    檢查並修正單一評分。
+
+    結構化輸出正常時這裡不會攔到東西，但 CLI 後端在拿不到 structured_output
+    時會退回自行解析 JSON，那條路徑沒有 schema 把關 —— 立場拼錯會讓計票
+    直接崩潰，信心度超界會讓分數爆表，兩者都必須在這裡擋下。
+    """
+    stance = _norm_symbol(call.get("stance"))
+    if stance not in STANCE_VALUE:
+        return None, f"立場無法辨識（{call.get('stance')!r}）"
+
+    try:
+        conviction = int(call.get("conviction"))
+    except (TypeError, ValueError):
+        return None, f"信心度無法辨識（{call.get('conviction')!r}）"
+
+    clamped = max(0, min(10, conviction))
+    note = (f"信心度 {conviction} 超出 0-10，已夾限為 {clamped}"
+            if clamped != conviction else None)
+    return dict(call, stance=stance, conviction=clamped), note
 
 
 def aggregate(final_calls: dict, symbols: list[str]) -> dict:
@@ -275,18 +326,40 @@ def aggregate(final_calls: dict, symbols: list[str]) -> dict:
     """
     consensus = {}
 
+    expected = [a["id"] for a in ANALYSTS]
+
     for sym in symbols:
         entries = []
-        for aid, result in final_calls.items():
-            if "error" in result:
+        excluded = []
+        warnings = []
+        for aid in expected:
+            result = final_calls.get(aid)
+            if result is None:
+                excluded.append((aid, "沒有回覆"))
                 continue
-            for c in result["revised_calls"]:
-                if c["symbol"] == sym:
-                    entries.append((aid, c))
-                    break
+            if "error" in result:
+                excluded.append((aid, result["error"]))
+                continue
+
+            found = _find_call(result.get("revised_calls", []), sym, symbols)
+            if found is None:
+                excluded.append((aid, "回覆中沒有這檔標的的評分"))
+                continue
+
+            clean, note = _sanitize_call(found)
+            if clean is None:
+                excluded.append((aid, note))
+                continue
+            if note:
+                warnings.append(f"{ANALYSTS_BY_ID[aid]['name']}：{note}")
+            entries.append((aid, clean))
 
         if not entries:
-            consensus[sym] = {"error": "沒有任何分析師對此標的給出評分"}
+            consensus[sym] = {
+                "error": "沒有任何分析師對此標的給出可用的評分",
+                "excluded": [{"analyst": aid, "name": ANALYSTS_BY_ID[aid]["name"],
+                              "reason": r} for aid, r in excluded],
+            }
             continue
 
         scores = [_signed_score(c) for _, c in entries]
@@ -316,13 +389,18 @@ def aggregate(final_calls: dict, symbols: list[str]) -> dict:
             "team_stance": stance,
             "team_score": round(team_score, 3),
             "votes": votes,
+            "voter_count": len(entries),
+            "expected_voters": len(expected),
+            "excluded": [{"analyst": aid, "name": ANALYSTS_BY_ID[aid]["name"],
+                          "reason": r} for aid, r in excluded],
+            "data_warnings": warnings,
             "dispersion": round(dispersion, 3),
             "is_split": split,
-            "needs_manual_review": split or dispersion >= 0.5,
+            "needs_manual_review": split or dispersion >= 0.5 or bool(excluded),
             "avg_conviction": round(sum(c["conviction"] for _, c in entries) / len(entries), 1),
             "target_price_range": (
                 {"low": min(targets), "high": max(targets),
-                 "median": sorted(targets)[len(targets) // 2]}
+                 "median": statistics.median(targets)}
                 if targets else None
             ),
             "tightest_stop_loss": max(stops) if stops else None,
@@ -367,6 +445,7 @@ def run_discussion(symbols: list[str], period: str = "1mo",
 
     if packet is not None:
         symbols = packet["symbols"]
+    symbols = list(dict.fromkeys(symbols))  # 去重並保持順序，避免重複抓取與重複計票
 
     started = datetime.now()
     print(f"\n{'=' * 64}")
@@ -457,7 +536,12 @@ def run_discussion(symbols: list[str], period: str = "1mo",
         if "error" in c:
             print(f"       {sym}: {c['error']}")
             continue
-        flag = "  ⚠ 分歧大，建議人工複核" if c["needs_manual_review"] else ""
+        flags = []
+        if c["voter_count"] < c["expected_voters"]:
+            flags.append(f"僅 {c['voter_count']}/{c['expected_voters']} 人計入")
+        if c["is_split"] or c["dispersion"] >= 0.5:
+            flags.append("分歧大")
+        flag = f"  ⚠ {'、'.join(flags)}，建議人工複核" if flags else ""
         print(f"       {sym}: {c['team_stance']}（分數 {c['team_score']:+.2f}，"
               f"票數 B{c['votes']['BUY']}/H{c['votes']['HOLD']}/S{c['votes']['SELL']}）{flag}")
 

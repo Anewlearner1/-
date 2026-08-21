@@ -157,6 +157,7 @@ def analyze_symbol(df: pd.DataFrame, symbol: str) -> dict:
         "period_high": round(period_high, 2),
         "period_low":  round(period_low, 2),
         "dist_from_high_pct": round(dist_from_high, 2),
+        "dist_from_low_pct": round(dist_from_low, 2),
         "volume_ratio": round(vol_ratio, 2),
         "signals": signals,
         "data_points": len(close),
