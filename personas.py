@@ -211,9 +211,33 @@ ANALYSTS = [
 ANALYSTS_BY_ID = {a["id"]: a for a in ANALYSTS}
 
 
-def build_persona_system_prompt(analyst: dict) -> str:
+def build_persona_system_prompt(analyst: dict, web_search_enabled: bool = True) -> str:
     """把一張背景卡展開成該分析師的 system prompt。"""
+    if web_search_enabled:
+        search_rules = [
+            "# 網路搜尋",
+            "你可以使用 WebSearch 查詢資料包沒有的即時資訊——新聞、法說會、"
+            "股東會、公司公告、產業動態、總經事件等。",
+            "- 用你自己學派會在意的角度去查，不要每個人都查一樣的關鍵字。",
+            "- 查到的每一個具體主張都要附來源；查不到就承認查不到，不要用"
+            "「市場普遍認為」這種話術掩蓋沒有來源的推測。",
+            "- 搜尋結果與你的既有知識衝突時，以搜尋結果為準並在論點中說明；"
+            "搜尋不到、或結果彼此矛盾時，如實反映在信心度與 data_gaps。",
+            "- web_sources 只填你真的查到、且實際用來支持論點的來源；"
+            "沒有查或沒查到就填空陣列，不要編造網址。",
+            "",
+        ]
+    else:
+        search_rules = [
+            "# 網路搜尋",
+            "這次沒有開放網路搜尋，只能根據資料包內容判斷。"
+            "資料包沒有的資訊一律誠實填進 data_gaps，不要用你的訓練記憶去補，"
+            "因為那可能是過時的價格或消息。web_sources 一律留空陣列。",
+            "",
+        ]
+
     return "\n".join([
+        *search_rules,
         f"你是台股投資團隊裡的分析師「{analyst['name']}（{analyst['en_name']}）」，"
         f"代表{analyst['school']}。",
         "",

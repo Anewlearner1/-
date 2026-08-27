@@ -72,8 +72,12 @@ python team.py 2330.TW 2454.TW      # 一次討論多檔
 python team.py 2330.TW --period 3mo # 拉長取樣區間
 python team.py 2330.TW --no-cross-exam   # 只跑第一輪，速度與額度減半
 python team.py 2330.TW --serial     # 五人一個一個跑（登入不穩時用）
+python team.py 2330.TW --no-web-search   # 關閉即時搜尋，只用資料包（更快更省）
 TEAM_EFFORT=medium python team.py 2330.TW  # 降低思考強度，更省更快
 ```
+
+五位分析師預設會用 WebSearch 查即時新聞、法說會、公告等資料包沒有的資訊，
+並在輸出的每個立場附上 `web_sources`。這些來源未經人工查核，使用前自己核實。
 
 ## 選用設定（`.env`）
 

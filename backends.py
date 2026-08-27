@@ -36,6 +36,10 @@ except ValueError:
 # 修掉並行續期競態的 CLI 版本
 MIN_CLI_VERSION = (2, 1, 211)
 
+# 讓分析師自己上網查即時消息（新聞、法說會、股東會、最新股價等資料包沒有的資訊）。
+# WebSearch 由 Anthropic 伺服器代打，不吃本機出口網路，離線或封鎖環境一樣能用。
+WEB_SEARCH = os.environ.get("TEAM_WEB_SEARCH", "1") == "1"
+
 # claude_cli 用別名（由已登入的 CLI 解析成實際模型）；api 用完整模型 ID
 CLI_MODEL = os.environ.get("TEAM_MODEL", "opus")
 API_MODEL = os.environ.get("TEAM_MODEL", "claude-opus-5")
@@ -47,11 +51,12 @@ class BackendError(RuntimeError):
 
 
 def describe() -> str:
+    search = "含網路搜尋" if WEB_SEARCH else "不含網路搜尋"
     if BACKEND == "api":
-        return f"api（ANTHROPIC_API_KEY，model={API_MODEL}, effort={EFFORT}）"
+        return f"api（ANTHROPIC_API_KEY，model={API_MODEL}, effort={EFFORT}, {search}）"
     mode = "序列" if SERIAL else f"平行，錯開 {STAGGER_SECONDS:g}s"
     return (f"claude_cli（Claude 訂閱登入，免 API key，model={CLI_MODEL}, "
-            f"effort={EFFORT}, {mode}）")
+            f"effort={EFFORT}, {mode}, {search}）")
 
 
 # --------------------------------------------------------------------------
@@ -170,9 +175,10 @@ async def _ask_cli(req: dict) -> tuple[dict, dict]:
         effort=EFFORT,
         thinking={"type": "adaptive"},
         output_format={"type": "json_schema", "schema": req["schema"]},
-        allowed_tools=[],          # 純文字推理，不給任何工具
-        max_turns=6,               # 沒有工具迴圈，留點餘裕給結構化輸出收束
-        permission_mode="dontAsk",
+        # 只開放 WebSearch（可關），不給任何會動到檔案系統或執行指令的工具
+        allowed_tools=["WebSearch"] if WEB_SEARCH else [],
+        max_turns=10 if WEB_SEARCH else 6,   # 開搜尋要留房間給多輪查詢再收束成結構化輸出
+        permission_mode="dontAsk",  # 只信任 allowed_tools 白名單內的工具，其餘一律拒絕
         setting_sources=[],        # 不載入使用者 / 專案設定與 hooks，避免干擾
     )
 
@@ -263,9 +269,15 @@ def _ask_api(req: dict) -> tuple[dict, dict]:
             "effort": EFFORT,
             "format": {"type": "json_schema", "schema": req["schema"]},
         },
+        tools=([{"type": "web_search_20260209", "name": "web_search", "max_uses": 5}]
+               if WEB_SEARCH else []),
         cache_control={"type": "ephemeral"},
     )
-    text = next(b.text for b in response.content if b.type == "text")
+    # 開了搜尋後回應會混雜搜尋結果區塊，最終的結構化 JSON 一定是最後一個文字區塊
+    text_blocks = [b.text for b in response.content if b.type == "text"]
+    if not text_blocks:
+        raise BackendError("回應中沒有文字內容（可能整輪都在搜尋、沒有收束成結構化輸出）")
+    text = text_blocks[-1]
     u = response.usage
     return json.loads(text), {
         "input_tokens": u.input_tokens,

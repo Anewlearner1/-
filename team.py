@@ -15,6 +15,7 @@
     TEAM_BACKEND         — claude_cli（預設，免 API key）| api（用 ANTHROPIC_API_KEY）
     TEAM_SERIAL          — 設 1 等同 --serial
     TEAM_STAGGER         — 平行啟動的間隔秒數（預設 2.0）
+    TEAM_WEB_SEARCH      — 設 0 等同 --no-web-search（預設開啟）
     TEAM_MODEL           — 模型；claude_cli 用別名如 opus，api 用完整 ID
     TEAM_EFFORT          — low | medium | high | xhigh | max（預設 high）
     REPORT_DIR           — 報告輸出目錄（預設 ./reports）
@@ -110,8 +111,13 @@ def _print_brief(result: dict) -> None:
             print(f"       {p['thesis']}")
             if p["changed_in_round2"]:
                 print(f"       修正原因：{p['change_reason']}")
+            if p.get("web_sources"):
+                print(f"       來源：{'；'.join(p['web_sources'])}")
 
     print(f"\n※ {result['disclaimer']}")
+    if "含網路搜尋" in result.get("backend", ""):
+        print("※ 部分論點來自即時網路搜尋，來源未經人工查核，"
+              "使用前請自行核實再作為決策依據。")
 
 
 def main() -> int:
@@ -130,6 +136,9 @@ def main() -> int:
     parser.add_argument("--serial", action="store_true",
                         help="五位分析師改為一個一個跑。慢很多，但完全避開多個 "
                              "claude 行程同時續期登入的競態（登入被撤銷時先用這個）")
+    parser.add_argument("--no-web-search", action="store_true",
+                        help="關閉網路搜尋，只根據資料包內容判斷（更快更省，"
+                             "但抓不到資料包之外的最新消息）")
     parser.add_argument("--dump-packet", action="store_true",
                         help="只抓行情資料並存成 JSON 後結束，不呼叫任何模型。"
                              "用於在有網路的機器上產出資料包，拿到別處開會")
@@ -159,6 +168,8 @@ def main() -> int:
 
     if args.serial:
         backends.SERIAL = True
+    if args.no_web_search:
+        backends.WEB_SEARCH = False
 
     result = run_discussion(
         args.symbols,

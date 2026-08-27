@@ -19,6 +19,7 @@ from fetcher import (
     SECTOR_MAP, fetch_market_breadth, fetch_stock_info,
     fetch_taiex_summary, fetch_yfinance_data,
 )
+import backends
 from backends import ask_many, describe as describe_backend, preflight
 from personas import (
     ANALYSTS, ANALYSTS_BY_ID, DISCLAIMER, VOTE_WEIGHTS,
@@ -36,6 +37,11 @@ def _call_schema(extra_props: dict | None = None) -> dict:
     """單一標的的評分結構。extra_props 用於 Round 2 的修正欄位。"""
     props = {
         "symbol": {"type": "string", "description": "股票代號，需與資料包一致"},
+        "web_sources": {
+            "type": "array", "items": {"type": "string"},
+            "description": "實際查到且用來支持論點的網路來源（網址或標題+媒體+日期）。"
+                          "沒搜尋或沒查到就給空陣列，不可編造",
+        },
         "stance": {"type": "string", "enum": ["BUY", "HOLD", "SELL"]},
         "conviction": {
             "type": "integer", "minimum": 0, "maximum": 10,
@@ -209,23 +215,31 @@ def format_packet(packet: dict) -> str:
 # 提示詞
 # --------------------------------------------------------------------------
 
-def _round1_prompt(packet_text: str) -> str:
-    return "\n".join([
+def _round1_prompt(packet_text: str, web_search_enabled: bool = True) -> str:
+    lines = [
         packet_text,
         "",
         "# 第一輪：獨立發言",
         "在還沒看到其他分析師意見的情況下，請對上述每一檔標的給出你的判斷。",
         "要求：",
         "1. 先定調你眼中的大盤環境（market_view）。",
-        "2. 對每一檔標的給出 stance（BUY/HOLD/SELL）與 conviction（0-10）。",
-        "3. thesis 用你自己的語言講，evidence 必須指向資料包裡的具體數字。",
+    ]
+    if web_search_enabled:
+        lines.append("2. 需要即時資訊時先查證，再對每一檔標的給出 stance（BUY/HOLD/SELL）"
+                     "與 conviction（0-10）。")
+    else:
+        lines.append("2. 對每一檔標的給出 stance（BUY/HOLD/SELL）與 conviction（0-10）。")
+    lines += [
+        "3. thesis 用你自己的語言講，evidence 必須指向資料包裡的具體數字"
+        + ("或你查到的具體來源" if web_search_enabled else "") + "。",
         "4. 你的學派用不到的指標就不要硬掰；資料不足直接反映在 conviction 與 data_gaps。",
         "5. self_check 誠實評估你的已知盲點這次可能讓你偏向哪一邊。",
-    ])
+    ]
+    return "\n".join(lines)
 
 
-def _round2_prompt(peer_notes: str) -> str:
-    return "\n".join([
+def _round2_prompt(peer_notes: str, web_search_enabled: bool = True) -> str:
+    lines = [
         "# 第二輪：交叉質詢",
         "以下是其他四位分析師的第一輪發言：",
         "",
@@ -238,7 +252,11 @@ def _round2_prompt(peer_notes: str) -> str:
         "3. 給出最終評分（revised_calls），必須涵蓋資料包中每一檔標的。"
         "被說服就改，並在 change_reason 說明被誰的哪個論點說服；沒被說服就維持原判並說明為什麼。",
         "4. 立場不變也要重新確認 conviction — 看過反方論點後信心度本來就可能微調。",
-    ])
+    ]
+    if web_search_enabled:
+        lines.append("5. 質詢或回應時如果需要更多即時資訊佐證，可以再查一次；"
+                     "新查到的來源一樣要寫進 web_sources。")
+    return "\n".join(lines)
 
 
 def _format_peer_notes(round1: dict, exclude_id: str) -> str:
@@ -420,6 +438,7 @@ def aggregate(final_calls: dict, symbols: list[str]) -> dict:
                     "changed_in_round2": c.get("changed", False),
                     "change_reason": c.get("change_reason", ""),
                     "data_gaps": c["data_gaps"],
+                    "web_sources": c.get("web_sources", []),
                 }
                 for aid, c in entries
             ],
@@ -463,13 +482,14 @@ def run_discussion(symbols: list[str], period: str = "1mo",
     usages: list[dict] = []
 
     # ---- Round 1：各自獨立發言 ----
-    print("\n  [R1] 五位分析師獨立發言中（平行呼叫）...")
-    r1_prompt = _round1_prompt(packet_text)
+    web_search = backends.WEB_SEARCH  # 執行當下才讀，不能在模組載入時就綁死
+    print(f"\n  [R1] 五位分析師獨立發言中（平行呼叫{'，含網路搜尋' if web_search else ''}）...")
+    r1_prompt = _round1_prompt(packet_text, web_search_enabled=web_search)
     replies = ask_many([
         {
             "key": a["id"],
             "label": a["name"],
-            "system": build_persona_system_prompt(a),
+            "system": build_persona_system_prompt(a, web_search_enabled=web_search),
             "messages": [{"role": "user", "content": r1_prompt}],
             "schema": ROUND1_SCHEMA,
         }
@@ -506,9 +526,10 @@ def run_discussion(symbols: list[str], period: str = "1mo",
             {
                 "key": a["id"],
                 "label": a["name"],
-                "system": build_persona_system_prompt(a),
+                "system": build_persona_system_prompt(a, web_search_enabled=web_search),
                 "messages": histories[a["id"]] + [
-                    {"role": "user", "content": _round2_prompt(_format_peer_notes(round1, a["id"]))},
+                    {"role": "user", "content": _round2_prompt(
+                        _format_peer_notes(round1, a["id"]), web_search_enabled=web_search)},
                 ],
                 "schema": ROUND2_SCHEMA,
             }
