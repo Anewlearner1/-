@@ -10,6 +10,12 @@ TWSE_BASE = "https://www.twse.com.tw/rwd/zh"
 TPEX_BASE = "https://www.tpex.org.tw/web/stock"
 MIS_BASE  = "https://mis.twse.com.tw/stock/api"
 
+# yfinance defaults to a curl_cffi session (for browser TLS fingerprinting),
+# which doesn't tunnel through this environment's proxy. A plain requests
+# session works fine and yfinance accepts it as a supported session type.
+_YF_SESSION = requests.Session()
+_YF_SESSION.headers.update({"User-Agent": "Mozilla/5.0"})
+
 # Major Taiwan indices and blue-chip stocks to track
 WATCH_LIST = [
     "^TWII",     # TAIEX (加權指數)
@@ -139,7 +145,7 @@ def fetch_yfinance_data(symbols: list[str], period: str = "5d",
     results = {}
     for sym in symbols:
         try:
-            ticker = yf.Ticker(sym)
+            ticker = yf.Ticker(sym, session=_YF_SESSION)
             df = ticker.history(period=period, interval=interval)
             if not df.empty:
                 df.index = pd.to_datetime(df.index)
@@ -157,7 +163,7 @@ def fetch_all_watchlist(period: str = "5d", interval: str = "1h") -> dict[str, p
 def fetch_stock_info(symbol: str) -> dict:
     """Fetch fundamental info for a single stock."""
     try:
-        ticker = yf.Ticker(symbol)
+        ticker = yf.Ticker(symbol, session=_YF_SESSION)
         info = ticker.info
         return {
             "symbol": symbol,
