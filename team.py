@@ -184,6 +184,15 @@ def main() -> int:
     path = _save(result)
     print(f"\n  [輸出] 結構化 JSON 已存至 {path}")
 
+    # 每個判斷都進帳本，日後才有勝率/賠率/期望值可算。
+    # 帳本寫入失敗不該讓已經跑完的會議失敗，所以只警告不中斷。
+    try:
+        from ledger import Ledger
+        n = Ledger().record(result)
+        print(f"  [帳本] 收錄 {n} 筆判斷，用 python score.py --resolve 在到期後結算")
+    except Exception as e:  # noqa: BLE001
+        print(f"  [帳本] 寫入失敗（分析結果不受影響）— {e}")
+
     # 全部標的都拿不到可用評分時以非 0 結束，讓排程或腳本能察覺
     if all("error" in c for c in result["consensus"].values()):
         print("  [失敗] 沒有任何標的取得可用的團隊評分")
