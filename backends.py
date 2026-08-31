@@ -28,13 +28,18 @@ EFFORT = os.environ.get("TEAM_EFFORT", "high")  # low | medium | high | xhigh | 
 SERIAL = os.environ.get("TEAM_SERIAL", "0") == "1"   # 完全序列執行，最保險但最慢
 
 try:
-    STAGGER_SECONDS = max(0.0, float(os.environ.get("TEAM_STAGGER", "2.0")))
+    STAGGER_SECONDS = max(0.0, float(os.environ.get("TEAM_STAGGER", "4.0")))
 except ValueError:
     sys.stdout.write(f"  [警告] TEAM_STAGGER={os.environ['TEAM_STAGGER']!r} 不是數字，改用預設 2.0\n")
-    STAGGER_SECONDS = 2.0
+    STAGGER_SECONDS = 4.0
 
 # 修掉並行續期競態的 CLI 版本
 MIN_CLI_VERSION = (2, 1, 211)
+
+# 五個 claude 行程同時冷啟動時，SDK 預設 60 秒的 initialize 握手會逾時
+# （實測五人中四人以 "Control request timeout: initialize" 失敗）。
+# 放寬到 3 分鐘，並把啟動間隔拉大 —— 寧可慢，不要整隊只剩一個人表態。
+LOAD_TIMEOUT_MS = int(os.environ.get("TEAM_LOAD_TIMEOUT_MS", "180000"))
 
 # 讓分析師自己上網查即時消息（新聞、法說會、股東會、最新股價等資料包沒有的資訊）。
 # WebSearch 由 Anthropic 伺服器代打，不吃本機出口網路，離線或封鎖環境一樣能用。
@@ -180,6 +185,7 @@ async def _ask_cli(req: dict) -> tuple[dict, dict]:
         max_turns=10 if WEB_SEARCH else 6,   # 開搜尋要留房間給多輪查詢再收束成結構化輸出
         permission_mode="dontAsk",  # 只信任 allowed_tools 白名單內的工具，其餘一律拒絕
         setting_sources=[],        # 不載入使用者 / 專案設定與 hooks，避免干擾
+        load_timeout_ms=LOAD_TIMEOUT_MS,
     )
 
     texts: list[str] = []

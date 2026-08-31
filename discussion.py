@@ -20,6 +20,7 @@ from fetcher import (
     fetch_taiex_summary, fetch_yfinance_data,
 )
 import backends
+import payoff
 from backends import ask_many, describe as describe_backend, preflight
 from personas import (
     ANALYSTS, ANALYSTS_BY_ID, DISCLAIMER, VOTE_WEIGHTS,
@@ -27,7 +28,8 @@ from personas import (
 )
 
 STANCE_VALUE = {"BUY": 1.0, "HOLD": 0.0, "SELL": -1.0}
-CONSENSUS_THRESHOLD = 0.25  # 團隊分數超過 ±0.25 才算方向明確
+# 團隊分數的單位是 R（風險倍數）：+0.3R 代表每承擔 1 單位風險，團隊預期賺 0.3
+CONSENSUS_THRESHOLD = 0.30
 
 # --------------------------------------------------------------------------
 # 結構化輸出 schema
@@ -51,7 +53,6 @@ LIMITS = {
     "response": 400,
     "market_view": 300,
     "self_check": 250,
-    "time_horizon": 60,
 }
 
 
@@ -68,9 +69,17 @@ def _call_schema(extra_props: dict | None = None) -> dict:
                           "沒查到就給空陣列，不可編造",
         },
         "stance": {"type": "string", "enum": ["BUY", "HOLD", "SELL"]},
-        "conviction": {
-            "type": "integer", "minimum": 0, "maximum": 10,
-            "description": "信心度 0-10；資料不足時必須下修",
+        "p_target": {
+            "type": ["number", "null"], "minimum": 0, "maximum": 1,
+            "description": "在本次會議的時間框架內，目標價「先於」停損被觸及的機率（0-1）。"
+                          "這是會被 Brier 分數事後打分的真機率，不是感覺；"
+                          "HOLD 或沒給目標／停損時填 null",
+        },
+        "horizon_fit": {
+            "type": "boolean",
+            "description": "本次會議的時間框架是否落在你這個學派有判斷力的範圍內。"
+                          "誠實填 false 會讓你被排除計票 —— 在不擅長的期間硬表態"
+                          "只會增加雜訊，不會增加資訊",
         },
         "thesis": {"type": "string", "maxLength": LIMITS["thesis"],
                    "description": "一段話講清楚你的核心論點，直接講結論與理由，不要鋪陳"},
@@ -87,8 +96,6 @@ def _call_schema(extra_props: dict | None = None) -> dict:
         },
         "target_price": {"type": ["number", "null"]},
         "stop_loss": {"type": ["number", "null"]},
-        "time_horizon": {"type": "string", "maxLength": LIMITS["time_horizon"],
-                         "description": "例如：3-6 個月、1-2 週、3 年以上"},
         "data_gaps": {"type": "string", "maxLength": LIMITS["data_gaps"],
                       "description": "希望有但沒拿到的資訊，條列關鍵字即可；沒有就寫「無」"},
     }
@@ -258,25 +265,42 @@ def format_packet(packet: dict) -> str:
 # 提示詞
 # --------------------------------------------------------------------------
 
-def _round1_prompt(packet_text: str, web_search_enabled: bool = True) -> str:
+def _horizon_block(days: int) -> str:
+    return "\n".join([
+        f"# 本次會議的時間框架：{days} 天",
+        f"所有判斷都必須針對「未來 {days} 天內」這個窗口。五個人回答同一個問題，",
+        "答案才能被加總 —— 把兩週的看法和三年的看法平均起來在數學上沒有意義。",
+        "若這個窗口不在你這個學派有判斷力的範圍內，horizon_fit 誠實填 false，",
+        "你會被排除計票；在不擅長的期間硬表態只會增加雜訊，不會增加資訊。",
+        "",
+        "目標價與停損必須成對給出，並估計 p_target（目標先於停損被觸及的機率）。",
+        "這個機率事後會用 Brier 分數打分，估不準會被記錄下來。",
+        "",
+    ])
+
+
+def _round1_prompt(packet_text: str, web_search_enabled: bool = True,
+                   horizon_days: int = 90) -> str:
     lines = [
         packet_text,
         "",
+        _horizon_block(horizon_days),
         "# 第一輪：獨立發言",
         "在還沒看到其他分析師意見的情況下，請對上述每一檔標的給出你的判斷。",
         "要求：",
         "1. 先定調你眼中的大盤環境（market_view）。",
     ]
     if web_search_enabled:
-        lines.append("2. 需要即時資訊時先查證，再對每一檔標的給出 stance（BUY/HOLD/SELL）"
-                     "與 conviction（0-10）。")
+        lines.append("2. 需要即時資訊時先查證，再給出 stance、目標價、停損與 p_target。")
     else:
-        lines.append("2. 對每一檔標的給出 stance（BUY/HOLD/SELL）與 conviction（0-10）。")
+        lines.append("2. 對每一檔標的給出 stance、目標價、停損與 p_target。")
     lines += [
         "3. thesis 用你自己的語言講，evidence 必須指向資料包裡的具體數字"
         + ("或你查到的具體來源" if web_search_enabled else "") + "。",
         "4. 你的學派用不到的指標就不要硬掰；資料不足直接反映在 conviction 與 data_gaps。",
         "5. self_check 誠實評估你的已知盲點這次可能讓你偏向哪一邊。",
+        "6. 賠率低於 2:1 的機會不值得動用資金 —— 與其湊一個勉強的目標價，"
+        "不如誠實給 HOLD。",
     ]
     return "\n".join(lines)
 
@@ -294,7 +318,7 @@ def _round2_prompt(peer_notes: str, web_search_enabled: bool = True) -> str:
         "2. 回應你預期別人會對你提出的質疑（response_to_critics）。",
         "3. 給出最終評分（revised_calls），必須涵蓋資料包中每一檔標的。"
         "被說服就改，並在 change_reason 說明被誰的哪個論點說服；沒被說服就維持原判並說明為什麼。",
-        "4. 立場不變也要重新確認 conviction — 看過反方論點後信心度本來就可能微調。",
+        "4. 立場不變也要重新確認 p_target — 看過反方論點後機率估計本來就可能微調。",
     ]
     if web_search_enabled:
         lines.append("5. 質詢或回應時如果需要更多即時資訊佐證，可以再查一次。"
@@ -313,8 +337,8 @@ def _format_peer_notes(round1: dict, exclude_id: str) -> str:
         blocks.append(f"大盤定調：{result['market_view']}")
         for c in result["calls"]:
             blocks.append(
-                f"- {c['symbol']}：{c['stance']}（信心 {c['conviction']}/10，"
-                f"{c['time_horizon']}）— {c['thesis']}"
+                f"- {c['symbol']}：{c['stance']}"
+                f"（目標達成機率 {c.get('p_target')}）— {c['thesis']}"
             )
             if c.get("key_evidence"):
                 blocks.append(f"  依據：{'；'.join(c['key_evidence'])}")
@@ -328,9 +352,15 @@ def _format_peer_notes(round1: dict, exclude_id: str) -> str:
 # 平權加總
 # --------------------------------------------------------------------------
 
-def _signed_score(call: dict) -> float:
-    """把單一評分換算成 -1.0 ~ +1.0 的帶號分數。"""
-    return STANCE_VALUE[call["stance"]] * (call["conviction"] / 10.0)
+def _payoff_of(call: dict) -> dict:
+    """把一則評分換算成賠率與期望值（單位：R）。算術一律由 Python 做。"""
+    return payoff.assess({
+        "stance": call["stance"],
+        "entry": call.get("entry"),
+        "stop": call.get("stop_loss"),
+        "target": call.get("target_price"),
+        "p_target": call.get("p_target"),
+    })
 
 
 def _norm_symbol(value) -> str:
@@ -370,15 +400,16 @@ def _sanitize_call(call: dict) -> tuple[dict | None, str | None]:
     if stance not in STANCE_VALUE:
         return None, f"立場無法辨識（{call.get('stance')!r}）"
 
-    try:
-        conviction = int(call.get("conviction"))
-    except (TypeError, ValueError):
-        return None, f"信心度無法辨識（{call.get('conviction')!r}）"
-
-    clamped = max(0, min(10, conviction))
-    note = (f"信心度 {conviction} 超出 0-10，已夾限為 {clamped}"
-            if clamped != conviction else None)
-    return dict(call, stance=stance, conviction=clamped), note
+    p, note = call.get("p_target"), None
+    if p is not None:
+        try:
+            p = float(p)
+        except (TypeError, ValueError):
+            return None, f"目標達成機率無法辨識（{call.get('p_target')!r}）"
+        clamped = min(max(p, 0.0), 1.0)
+        if clamped != p:
+            note, p = f"機率 {p} 超出 0-1，已夾限為 {clamped}", clamped
+    return dict(call, stance=stance, p_target=p), note
 
 
 def _merge_sources(round1: dict, aid: str, symbol: str, revised: list) -> list:
@@ -398,7 +429,8 @@ def _merge_sources(round1: dict, aid: str, symbol: str, revised: list) -> list:
     return merged
 
 
-def aggregate(final_calls: dict, symbols: list[str], round1: dict | None = None) -> dict:
+def aggregate(final_calls: dict, symbols: list[str], round1: dict | None = None,
+              packet: dict | None = None) -> dict:
     """
     完全平權加總：五人一人一票，以信心度加權後取平均。
     回傳每檔標的的團隊共識、分歧度與個別立場。
@@ -407,7 +439,9 @@ def aggregate(final_calls: dict, symbols: list[str], round1: dict | None = None)
 
     expected = [a["id"] for a in ANALYSTS]
 
+    tech = (packet or {}).get("technicals", {})
     for sym in symbols:
+        entry_price = (tech.get(sym) or {}).get("last_price")
         entries = []
         excluded = []
         warnings = []
@@ -429,6 +463,11 @@ def aggregate(final_calls: dict, symbols: list[str], round1: dict | None = None)
             if clean is None:
                 excluded.append((aid, note))
                 continue
+            # 自認這個時間框架不在能力圈內 —— 在不擅長的期間硬表態只會增加雜訊
+            if clean.get("horizon_fit") is False:
+                excluded.append((aid, "自述本次時間框架不在其能力圈，排除計票"))
+                continue
+            clean["entry"] = entry_price
             if note:
                 warnings.append(f"{ANALYSTS_BY_ID[aid]['name']}：{note}")
             entries.append((aid, clean))
@@ -441,7 +480,8 @@ def aggregate(final_calls: dict, symbols: list[str], round1: dict | None = None)
             }
             continue
 
-        scores = [_signed_score(c) for _, c in entries]
+        payoffs = {aid: _payoff_of(c) for aid, c in entries}
+        scores = [payoffs[aid]["signed_expected_r"] for aid, _ in entries]
         team_score = sum(s * VOTE_WEIGHTS[aid] for s, (aid, _) in zip(scores, entries))
         team_score /= sum(VOTE_WEIGHTS[aid] for aid, _ in entries)
 
@@ -476,7 +516,12 @@ def aggregate(final_calls: dict, symbols: list[str], round1: dict | None = None)
             "dispersion": round(dispersion, 3),
             "is_split": split,
             "needs_manual_review": split or dispersion >= 0.5 or bool(excluded),
-            "avg_conviction": round(sum(c["conviction"] for _, c in entries) / len(entries), 1),
+            "actionable_count": sum(1 for v in payoffs.values() if v["actionable"]),
+            "avg_p_target": (
+                round(sum(c["p_target"] for _, c in entries if c.get("p_target") is not None)
+                      / max(1, sum(1 for _, c in entries if c.get("p_target") is not None)), 2)
+                if any(c.get("p_target") is not None for _, c in entries) else None
+            ),
             "target_price_range": (
                 {"low": min(targets), "high": max(targets),
                  "median": statistics.median(targets)}
@@ -489,13 +534,16 @@ def aggregate(final_calls: dict, symbols: list[str], round1: dict | None = None)
                     "name": ANALYSTS_BY_ID[aid]["name"],
                     "school": ANALYSTS_BY_ID[aid]["school"],
                     "stance": c["stance"],
-                    "conviction": c["conviction"],
-                    "signed_score": round(_signed_score(c), 3),
+                    "p_target": c.get("p_target"),
+                    "r_target": payoffs[aid]["r_target"],
+                    "expected_r": payoffs[aid]["expected_r"],
+                    "signed_score": payoffs[aid]["signed_expected_r"],
+                    "actionable": payoffs[aid]["actionable"],
+                    "payoff_note": payoffs[aid]["reason"],
                     "thesis": c["thesis"],
                     "key_risks": c["key_risks"],
                     "target_price": c["target_price"],
                     "stop_loss": c["stop_loss"],
-                    "time_horizon": c["time_horizon"],
                     "changed_in_round2": c.get("changed", False),
                     "change_reason": c.get("change_reason", ""),
                     "data_gaps": c["data_gaps"],
@@ -516,7 +564,7 @@ def aggregate(final_calls: dict, symbols: list[str], round1: dict | None = None)
 
 def run_discussion(symbols: list[str], period: str = "1mo",
                    interval: str = "1d", cross_examine: bool = True,
-                   packet: dict | None = None) -> dict:
+                   packet: dict | None = None, horizon_days: int = 90) -> dict:
     """
     跑完一場完整的投資團隊討論，回傳結構化結果。
 
@@ -533,7 +581,7 @@ def run_discussion(symbols: list[str], period: str = "1mo",
     print(f"\n{'=' * 64}")
     print(f"  投資團隊會議  {started.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"  主理人：使用者本人｜分析師：{len(ANALYSTS)} 位（完全平權）")
-    print(f"  標的：{', '.join(symbols)}")
+    print(f"  標的：{', '.join(symbols)}｜時間框架：{horizon_days} 天")
     print(f"  後端：{describe_backend()}")
     print(f"{'=' * 64}")
 
@@ -547,7 +595,8 @@ def run_discussion(symbols: list[str], period: str = "1mo",
     # ---- Round 1：各自獨立發言 ----
     web_search = backends.WEB_SEARCH  # 執行當下才讀，不能在模組載入時就綁死
     print(f"\n  [R1] 五位分析師獨立發言中（平行呼叫{'，含網路搜尋' if web_search else ''}）...")
-    r1_prompt = _round1_prompt(packet_text, web_search_enabled=web_search)
+    r1_prompt = _round1_prompt(packet_text, web_search_enabled=web_search,
+                               horizon_days=horizon_days)
     replies = ask_many([
         {
             "key": a["id"],
@@ -614,7 +663,7 @@ def run_discussion(symbols: list[str], period: str = "1mo",
 
     # ---- 平權加總 ----
     print("\n  [彙總] 完全平權加總五人評分...")
-    consensus = aggregate(final, symbols, round1=round1)
+    consensus = aggregate(final, symbols, round1=round1, packet=packet)
 
     for sym, c in consensus.items():
         if "error" in c:
@@ -626,7 +675,7 @@ def run_discussion(symbols: list[str], period: str = "1mo",
         if c["is_split"] or c["dispersion"] >= 0.5:
             flags.append("分歧大")
         flag = f"  ⚠ {'、'.join(flags)}，建議人工複核" if flags else ""
-        print(f"       {sym}: {c['team_stance']}（分數 {c['team_score']:+.2f}，"
+        print(f"       {sym}: {c['team_stance']}（期望值 {c['team_score']:+.2f}R，"
               f"票數 B{c['votes']['BUY']}/H{c['votes']['HOLD']}/S{c['votes']['SELL']}）{flag}")
 
     total_usage = {
@@ -646,6 +695,7 @@ def run_discussion(symbols: list[str], period: str = "1mo",
         "symbols": symbols,
         "moderator": "使用者本人（AI 不代為拍板）",
         "voting_rule": "完全平權：五人一人一票，以信心度加權後取平均",
+        "horizon_days": horizon_days,
         "rounds": ["opening", "cross_examination"] if cross_examine else ["opening"],
         "backend": describe_backend(),
         "analysts": [

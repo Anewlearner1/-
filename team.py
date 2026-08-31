@@ -89,7 +89,10 @@ def _print_brief(result: dict) -> None:
             continue
 
         print(f"\n■ {sym}　團隊共識：{c['team_stance']}"
-              f"（分數 {c['team_score']:+.2f}｜平均信心 {c['avg_conviction']}/10）")
+              f"（期望值 {c['team_score']:+.2f}R｜{result.get('horizon_days', '?')} 天窗口）")
+        print(f"  可執行判斷：{c['actionable_count']}/{c['voter_count']} 人"
+              f"（賠率 ≥2:1 且期望值為正）"
+              + (f"｜平均目標達成機率 {c['avg_p_target']:.0%}" if c.get('avg_p_target') else ""))
         print(f"  票數：買 {c['votes']['BUY']}／觀望 {c['votes']['HOLD']}／賣 {c['votes']['SELL']}"
               f"｜計入 {c['voter_count']}/{c['expected_voters']} 人｜分歧度 {c['dispersion']}")
         for x in c["excluded"]:
@@ -106,8 +109,9 @@ def _print_brief(result: dict) -> None:
 
         for p in c["positions"]:
             mark = "↻" if p["changed_in_round2"] else " "
-            print(f"   {mark} {p['name']}（{p['school']}）"
-                  f"{p['stance']} {p['conviction']}/10｜{p['time_horizon']}")
+            gate = "✓可執行" if p["actionable"] else "✗"
+            print(f"   {mark} {p['name']}（{p['school']}）{p['stance']} {gate}"
+                  f"｜{p['payoff_note']}")
             print(f"       {p['thesis']}")
             if p["changed_in_round2"]:
                 print(f"       修正原因：{p['change_reason']}")
@@ -131,6 +135,9 @@ def main() -> int:
                         help="歷史資料區間（預設 1mo；可用 5d/1mo/3mo/6mo/1y）")
     parser.add_argument("--interval", default="1d",
                         help="K 棒間隔（預設 1d；可用 1h/1d/1wk）")
+    parser.add_argument("--horizon", type=int, default=90, metavar="DAYS",
+                        help="本次會議的時間框架天數（預設 90）。五人針對同一個窗口"
+                             "表態，答案才能加總；自認不擅長此窗口者會被排除計票")
     parser.add_argument("--no-cross-exam", action="store_true",
                         help="跳過第二輪交叉質詢，只跑第一輪（約省一半成本）")
     parser.add_argument("--serial", action="store_true",
@@ -177,6 +184,7 @@ def main() -> int:
         interval=args.interval,
         cross_examine=not args.no_cross_exam,
         packet=packet,
+        horizon_days=args.horizon,
     )
 
     _print_brief(result)

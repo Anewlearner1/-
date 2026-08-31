@@ -242,3 +242,34 @@ def test_scorecard_reports_calibration_by_conviction(tmp_path):
 
 def test_empty_ledger_does_not_crash(tmp_path):
     assert ledger.Ledger(tmp_path / "none.jsonl").scorecard() == {}
+
+
+# --------------------------------------------------------------------------
+# Brier 分數：p_target 估得準不準（conviction 那種感覺分數做不到的事）
+# --------------------------------------------------------------------------
+
+def test_scorecard_scores_probability_calibration(tmp_path):
+    """說 90% 會到目標、結果三次中兩次到 —— 機率是可以被證偽的。"""
+    lg = ledger.Ledger(tmp_path / "l.jsonl")
+    lg._append([
+        {"call_id": str(i), "analyst": "x", "stance": "BUY", "symbol": "S",
+         "p_target": p,
+         "resolution": {"outcome": "TARGET_HIT" if hit else "STOP_HIT",
+                        "r_multiple": 2.0 if hit else -1.0}}
+        for i, (p, hit) in enumerate([(0.9, True), (0.9, True), (0.9, False)])
+    ])
+    s = lg.scorecard()["x"]
+    # (0.01 + 0.01 + 0.81) / 3
+    assert s["brier"] == pytest.approx(0.2767, abs=1e-3)
+    assert s["avg_p_target"] == pytest.approx(0.9)
+    assert s["actual_hit_rate"] == pytest.approx(2 / 3)
+
+
+def test_brier_ignores_calls_without_probability(tmp_path):
+    """沒給機率的判斷不能混進校準統計。"""
+    lg = ledger.Ledger(tmp_path / "l.jsonl")
+    lg._append([
+        {"call_id": "1", "analyst": "x", "stance": "BUY", "symbol": "S", "p_target": None,
+         "resolution": {"outcome": "TARGET_HIT", "r_multiple": 2.0}},
+    ])
+    assert lg.scorecard()["x"]["brier"] is None

@@ -56,7 +56,14 @@ def _print_scorecard(lg: Ledger) -> int:
               f"{f(s['avg_r']):>7} {f(s['total_r']):>7} "
               f"{f(s['payoff_ratio'], '.1f'):>6} {s['abstained']:>5}")
 
-    print("\n  信心度校準（高信心該比低信心準，否則信心度是雜訊）")
+    print("\n  機率校準（Brier 越低越好；0.25 等於每次都猜 50%）")
+    for aid, s_ in rows:
+        if s_.get("brier") is None:
+            continue
+        print(f"  {aid:<10} Brier {s_['brier']:.3f}｜平均估 {s_['avg_p_target']:.0%}"
+              f"、實際達標 {s_['actual_hit_rate']:.0%}")
+
+    print("\n  信心度校準（舊格式報告用；新格式改看上方機率校準）")
     for aid, s in rows:
         c = s["calibration"]
         if not (c["high"]["n"] or c["low"]["n"]):

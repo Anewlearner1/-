@@ -22,6 +22,8 @@
 import hashlib
 import json
 import re
+
+import payoff
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -150,7 +152,8 @@ class Ledger:
                 cid = _call_id(meeting.get("meeting_time"), sym, p["analyst"])
                 if cid in existing or entry is None:
                     continue
-                days = parse_horizon_days(p.get("time_horizon"))
+                # 新格式用會議層級的 horizon_days；舊報告仍讀每人的 time_horizon
+                days = meeting.get("horizon_days") or parse_horizon_days(p.get("time_horizon"))
                 new.append({
                     "call_id": cid,
                     "made_date": str(made),
@@ -160,6 +163,9 @@ class Ledger:
                     "analyst": p["analyst"],
                     "stance": p["stance"],
                     "conviction": p.get("conviction"),
+                    "p_target": p.get("p_target"),
+                    "r_target": p.get("r_target"),
+                    "expected_r": p.get("expected_r"),
                     "entry": float(entry),
                     "target": p.get("target_price"),
                     "stop": p.get("stop_loss"),
@@ -222,8 +228,27 @@ class Ledger:
                     if wins and losses else None
                 ),
                 "calibration": _calibration(scored),
+                **_probability_calibration(scored),
             }
         return out
+
+
+def _probability_calibration(scored: list[dict]) -> dict:
+    """
+    p_target 的校準品質。Brier 越低越好：0.25 等於每次都猜 50%。
+
+    這是 conviction 那種 0-10 感覺分數做不到的事 —— 機率可以被證偽，
+    而「說 90% 卻只中 2/3」會被這個數字抓出來。
+    """
+    pairs = [(r["p_target"], r["resolution"]["outcome"] == "TARGET_HIT")
+             for r in scored if r.get("p_target") is not None]
+    if not pairs:
+        return {"brier": None, "avg_p_target": None, "actual_hit_rate": None}
+    return {
+        "brier": payoff.brier_score(pairs),
+        "avg_p_target": sum(p for p, _ in pairs) / len(pairs),
+        "actual_hit_rate": sum(1 for _, hit in pairs if hit) / len(pairs),
+    }
 
 
 def _calibration(scored: list[dict]) -> dict:
