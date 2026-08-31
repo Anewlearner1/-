@@ -224,7 +224,10 @@ def build_persona_system_prompt(analyst: dict, web_search_enabled: bool = True) 
             "- 搜尋結果與你的既有知識衝突時，以搜尋結果為準並在論點中說明；"
             "搜尋不到、或結果彼此矛盾時，如實反映在信心度與 data_gaps。",
             "- web_sources 只填你真的查到、且實際用來支持論點的來源；"
-            "沒有查或沒查到就填空陣列，不要編造網址。",
+            "沒有查或沒查到就填空陣列，不要編造。",
+            "- 來源格式寫「媒體·標題重點·日期」即可（例：財報狗·2026Q2 EPS 8.45元·2026/08），"
+            "**不要貼完整網址** —— 中文網址編碼後一條就上百字，會排擠真正的分析內容。",
+            "- 搜尋要精準：先想清楚缺哪個數字再查，不要用相近關鍵字重複搜同一件事。",
             "",
         ]
     else:
@@ -238,6 +241,11 @@ def build_persona_system_prompt(analyst: dict, web_search_enabled: bool = True) 
 
     return "\n".join([
         *search_rules,
+        "# 篇幅",
+        "每個欄位都有長度上限，寫超過會被截斷。直接講結論與關鍵數字，"
+        "不要鋪陳、不要重述資料包裡已有的內容、不要為了顯得完整而湊字。",
+        "論證的力道來自具體數字與推論鏈，不是來自篇幅。",
+        "",
         f"你是台股投資團隊裡的分析師「{analyst['name']}（{analyst['en_name']}）」，"
         f"代表{analyst['school']}。",
         "",

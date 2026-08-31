@@ -33,27 +33,64 @@ CONSENSUS_THRESHOLD = 0.25  # 團隊分數超過 ±0.25 才算方向明確
 # 結構化輸出 schema
 # --------------------------------------------------------------------------
 
+# 輸出長度上限。模型不受限時會把每個欄位寫成長篇，且同一批來源在兩輪重複輸出，
+# 實測一場會議 56K 字元中 23% 是 web_sources、15% 是 challenges。
+# 上限訂在「足以承載完整論證」而非「逼出摘要」，論點品質不變、贅字消失。
+LIMITS = {
+    "thesis": 500,          # 核心論點：一段話講完
+    "evidence_item": 120,   # 單條證據
+    "evidence_items": 4,
+    "risk_item": 120,
+    "risk_items": 4,
+    "source_item": 90,      # 「媒體·標題·日期」，不含 percent-encoded 長網址
+    "source_items": 4,
+    "data_gaps": 200,
+    "change_reason": 350,
+    "critique": 300,
+    "challenges": 2,
+    "response": 400,
+    "market_view": 300,
+    "self_check": 250,
+    "time_horizon": 60,
+}
+
+
 def _call_schema(extra_props: dict | None = None) -> dict:
     """單一標的的評分結構。extra_props 用於 Round 2 的修正欄位。"""
     props = {
         "symbol": {"type": "string", "description": "股票代號，需與資料包一致"},
         "web_sources": {
-            "type": "array", "items": {"type": "string"},
-            "description": "實際查到且用來支持論點的網路來源（網址或標題+媒體+日期）。"
-                          "沒搜尋或沒查到就給空陣列，不可編造",
+            "type": "array",
+            "items": {"type": "string", "maxLength": LIMITS["source_item"]},
+            "maxItems": LIMITS["source_items"],
+            "description": "實際用來支持論點的來源，格式「媒體·標題重點·日期」，"
+                          "不要貼完整網址（percent-encoded 網址極耗篇幅）。"
+                          "沒查到就給空陣列，不可編造",
         },
         "stance": {"type": "string", "enum": ["BUY", "HOLD", "SELL"]},
         "conviction": {
             "type": "integer", "minimum": 0, "maximum": 10,
             "description": "信心度 0-10；資料不足時必須下修",
         },
-        "thesis": {"type": "string", "description": "一段話講清楚你的核心論點"},
-        "key_evidence": {"type": "array", "items": {"type": "string"}},
-        "key_risks": {"type": "array", "items": {"type": "string"}},
+        "thesis": {"type": "string", "maxLength": LIMITS["thesis"],
+                   "description": "一段話講清楚你的核心論點，直接講結論與理由，不要鋪陳"},
+        "key_evidence": {
+            "type": "array",
+            "items": {"type": "string", "maxLength": LIMITS["evidence_item"]},
+            "maxItems": LIMITS["evidence_items"],
+            "description": "每條一個具體數字或事實，不要整段論述",
+        },
+        "key_risks": {
+            "type": "array",
+            "items": {"type": "string", "maxLength": LIMITS["risk_item"]},
+            "maxItems": LIMITS["risk_items"],
+        },
         "target_price": {"type": ["number", "null"]},
         "stop_loss": {"type": ["number", "null"]},
-        "time_horizon": {"type": "string", "description": "例如：3-6 個月、1-2 週、3 年以上"},
-        "data_gaps": {"type": "string", "description": "你希望有但資料包沒給的資訊；沒有就寫「無」"},
+        "time_horizon": {"type": "string", "maxLength": LIMITS["time_horizon"],
+                         "description": "例如：3-6 個月、1-2 週、3 年以上"},
+        "data_gaps": {"type": "string", "maxLength": LIMITS["data_gaps"],
+                      "description": "希望有但沒拿到的資訊，條列關鍵字即可；沒有就寫「無」"},
     }
     if extra_props:
         props.update(extra_props)
@@ -68,9 +105,11 @@ def _call_schema(extra_props: dict | None = None) -> dict:
 ROUND1_SCHEMA = {
     "type": "object",
     "properties": {
-        "market_view": {"type": "string", "description": "你對當前大盤環境的定調"},
+        "market_view": {"type": "string", "maxLength": LIMITS["market_view"],
+                        "description": "你對當前大盤環境的定調"},
         "calls": {"type": "array", "items": _call_schema()},
-        "self_check": {"type": "string", "description": "依你已知的盲點，自評本次判斷可能偏在哪一邊"},
+        "self_check": {"type": "string", "maxLength": LIMITS["self_check"],
+                       "description": "依你已知的盲點，自評本次判斷可能偏在哪一邊"},
     },
     "required": ["market_view", "calls", "self_check"],
     "additionalProperties": False,
@@ -81,7 +120,8 @@ ROUND2_SCHEMA = {
     "properties": {
         "challenges": {
             "type": "array",
-            "description": "對其他分析師的質詢，至少提出一則",
+            "maxItems": LIMITS["challenges"],
+            "description": "對其他分析師的質詢，至少一則、至多兩則，挑最要害的講",
             "items": {
                 "type": "object",
                 "properties": {
@@ -90,19 +130,22 @@ ROUND2_SCHEMA = {
                         "enum": [a["id"] for a in ANALYSTS],
                     },
                     "symbol": {"type": "string"},
-                    "critique": {"type": "string", "description": "具體指出他哪個推論站不住腳"},
+                    "critique": {"type": "string", "maxLength": LIMITS["critique"],
+                                 "description": "直接指出他哪個推論站不住腳，不要鋪陳"},
                 },
                 "required": ["target_analyst", "symbol", "critique"],
                 "additionalProperties": False,
             },
         },
-        "response_to_critics": {"type": "string", "description": "回應別人可能對你的質疑"},
+        "response_to_critics": {"type": "string", "maxLength": LIMITS["response"],
+                                "description": "回應別人可能對你的質疑"},
         "revised_calls": {
             "type": "array",
             "description": "你的最終評分，需涵蓋資料包中的每一檔標的",
             "items": _call_schema({
                 "changed": {"type": "boolean", "description": "相較第一輪是否有修正"},
-                "change_reason": {"type": "string", "description": "有修正就說明被誰說服；沒改就寫「維持原判」"},
+                "change_reason": {"type": "string", "maxLength": LIMITS["change_reason"],
+                                  "description": "有修正就說明被誰說服；沒改就寫「維持原判」"},
             }),
         },
     },
@@ -254,8 +297,9 @@ def _round2_prompt(peer_notes: str, web_search_enabled: bool = True) -> str:
         "4. 立場不變也要重新確認 conviction — 看過反方論點後信心度本來就可能微調。",
     ]
     if web_search_enabled:
-        lines.append("5. 質詢或回應時如果需要更多即時資訊佐證，可以再查一次；"
-                     "新查到的來源一樣要寫進 web_sources。")
+        lines.append("5. 質詢或回應時如果需要更多即時資訊佐證，可以再查一次。"
+                     "web_sources 只填這一輪「新查到」的來源，第一輪已經給過的不要重貼"
+                     "（系統會自動合併兩輪來源）。")
     return "\n".join(lines)
 
 
@@ -337,7 +381,24 @@ def _sanitize_call(call: dict) -> tuple[dict | None, str | None]:
     return dict(call, stance=stance, conviction=clamped), note
 
 
-def aggregate(final_calls: dict, symbols: list[str]) -> dict:
+def _merge_sources(round1: dict, aid: str, symbol: str, revised: list) -> list:
+    """合併分析師兩輪的來源 —— 第二輪只填新來源，第一輪的在這裡補回。"""
+    seen, merged = set(), []
+    r1 = round1.get(aid) or {}
+    pools = [] if "error" in r1 else [r1.get("calls", [])]
+    pools.append([{"symbol": symbol, "web_sources": revised}])
+    for pool in pools:
+        for c in pool:
+            if _norm_symbol(c.get("symbol")) != _norm_symbol(symbol):
+                continue
+            for src in c.get("web_sources") or []:
+                if src not in seen:
+                    seen.add(src)
+                    merged.append(src)
+    return merged
+
+
+def aggregate(final_calls: dict, symbols: list[str], round1: dict | None = None) -> dict:
     """
     完全平權加總：五人一人一票，以信心度加權後取平均。
     回傳每檔標的的團隊共識、分歧度與個別立場。
@@ -438,7 +499,9 @@ def aggregate(final_calls: dict, symbols: list[str]) -> dict:
                     "changed_in_round2": c.get("changed", False),
                     "change_reason": c.get("change_reason", ""),
                     "data_gaps": c["data_gaps"],
-                    "web_sources": c.get("web_sources", []),
+                    "web_sources": (_merge_sources(round1 or {}, aid, sym,
+                                                   c.get("web_sources", []))
+                                    if round1 else c.get("web_sources", [])),
                 }
                 for aid, c in entries
             ],
@@ -551,7 +614,7 @@ def run_discussion(symbols: list[str], period: str = "1mo",
 
     # ---- 平權加總 ----
     print("\n  [彙總] 完全平權加總五人評分...")
-    consensus = aggregate(final, symbols)
+    consensus = aggregate(final, symbols, round1=round1)
 
     for sym, c in consensus.items():
         if "error" in c:
