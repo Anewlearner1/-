@@ -1,0 +1,344 @@
+"""
+LLM 後端 — 讓投資團隊可以用「Claude 訂閱帳號」或「API key」兩種方式跑。
+
+預設 claude_cli：透過 Claude Agent SDK 呼叫本機已登入的 Claude Code CLI，
+用你的 Claude 訂閱額度，不需要 ANTHROPIC_API_KEY，也不會按 token 另外計費。
+
+用 TEAM_BACKEND 環境變數切換：
+    TEAM_BACKEND=claude_cli   # 預設，走訂閱登入
+    TEAM_BACKEND=api          # 走 ANTHROPIC_API_KEY
+
+兩個後端都吃同一份 json_schema，回傳同樣的 (結構化結果, 用量) 形狀，
+所以 discussion.py 不需要知道底下是哪一種。
+"""
+import asyncio
+import json
+import os
+import shutil
+import sys
+from concurrent.futures import ThreadPoolExecutor
+
+BACKEND = os.environ.get("TEAM_BACKEND", "claude_cli").lower()
+EFFORT = os.environ.get("TEAM_EFFORT", "high")  # low | medium | high | xhigh | max
+
+# 同一台機器上的多個 claude 行程共用同一份登入，並協調 token 續期。
+# 若五個行程同時冷啟動而登入剛好需要續期，舊版 CLI 會發生續期競態並讓
+# 儲存的登入被撤銷（出現 "OAuth access token has been revoked"）。
+# 錯開啟動時間讓第一個行程先完成續期，其餘再接上已更新的 token。
+SERIAL = os.environ.get("TEAM_SERIAL", "0") == "1"   # 完全序列執行，最保險但最慢
+
+try:
+    STAGGER_SECONDS = max(0.0, float(os.environ.get("TEAM_STAGGER", "4.0")))
+except ValueError:
+    sys.stdout.write(f"  [警告] TEAM_STAGGER={os.environ['TEAM_STAGGER']!r} 不是數字，改用預設 2.0\n")
+    STAGGER_SECONDS = 4.0
+
+# 修掉並行續期競態的 CLI 版本
+MIN_CLI_VERSION = (2, 1, 211)
+
+# 五個 claude 行程同時冷啟動時，SDK 預設 60 秒的 initialize 握手會逾時
+# （實測五人中四人以 "Control request timeout: initialize" 失敗）。
+# 放寬到 3 分鐘，並把啟動間隔拉大 —— 寧可慢，不要整隊只剩一個人表態。
+LOAD_TIMEOUT_MS = int(os.environ.get("TEAM_LOAD_TIMEOUT_MS", "180000"))
+
+# 讓分析師自己上網查即時消息（新聞、法說會、股東會、最新股價等資料包沒有的資訊）。
+# WebSearch 由 Anthropic 伺服器代打，不吃本機出口網路，離線或封鎖環境一樣能用。
+WEB_SEARCH = os.environ.get("TEAM_WEB_SEARCH", "1") == "1"
+
+# claude_cli 用別名（由已登入的 CLI 解析成實際模型）；api 用完整模型 ID
+CLI_MODEL = os.environ.get("TEAM_MODEL", "opus")
+API_MODEL = os.environ.get("TEAM_MODEL", "claude-opus-5")
+MAX_TOKENS = 16000
+
+
+class BackendError(RuntimeError):
+    """後端呼叫失敗，訊息已整理成人看得懂的形式。"""
+
+
+def describe() -> str:
+    search = "含網路搜尋" if WEB_SEARCH else "不含網路搜尋"
+    if BACKEND == "api":
+        return f"api（ANTHROPIC_API_KEY，model={API_MODEL}, effort={EFFORT}, {search}）"
+    mode = "序列" if SERIAL else f"平行，錯開 {STAGGER_SECONDS:g}s"
+    return (f"claude_cli（Claude 訂閱登入，免 API key，model={CLI_MODEL}, "
+            f"effort={EFFORT}, {mode}, {search}）")
+
+
+# --------------------------------------------------------------------------
+# 共用工具
+# --------------------------------------------------------------------------
+
+def _extract_json(text: str) -> dict:
+    """從回覆文字中挖出 JSON 物件（容忍 ``` 圍欄與前後贅字）。"""
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.split("\n", 1)[-1]
+        if cleaned.rstrip().endswith("```"):
+            cleaned = cleaned.rstrip()[:-3]
+    cleaned = cleaned.strip()
+
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        pass
+
+    # 退而求其次：掃出第一個完整的大括號區塊
+    depth = 0
+    start = -1
+    in_string = False
+    escaped = False
+    for i, ch in enumerate(cleaned):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0 and start >= 0:
+                return json.loads(cleaned[start:i + 1])
+    raise BackendError("回覆中找不到合法的 JSON，模型可能沒有照結構輸出")
+
+
+def _empty_usage() -> dict:
+    return {"input_tokens": 0, "output_tokens": 0, "cache_read": 0,
+            "cache_created": 0, "cost_usd": 0.0}
+
+
+# --------------------------------------------------------------------------
+# 後端一：claude_cli（Claude 訂閱登入，免 API key）
+# --------------------------------------------------------------------------
+
+def _cli_version() -> tuple[int, ...] | None:
+    """讀出 claude --version 的版本號，讀不到就回 None（不擋執行）。"""
+    import re
+    import subprocess
+    try:
+        out = subprocess.run(["claude", "--version"], capture_output=True,
+                             text=True, timeout=20).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = re.search(r"(\d+)\.(\d+)\.(\d+)", out)
+    return tuple(int(g) for g in m.groups()) if m else None
+
+
+def _preflight_cli() -> None:
+    if shutil.which("claude") is None:
+        raise BackendError(
+            "找不到 claude 指令。請先安裝並登入 Claude Code：\n"
+            "    npm install -g @anthropic-ai/claude-code\n"
+            "    claude login\n"
+            "（或改用 API key 模式：TEAM_BACKEND=api）"
+        )
+    try:
+        import claude_agent_sdk  # noqa: F401
+    except ImportError as e:
+        raise BackendError(
+            "缺少 claude-agent-sdk 套件，請執行：pip install -r requirements.txt"
+        ) from e
+
+    version = _cli_version()
+    if version is not None and version < MIN_CLI_VERSION and not SERIAL:
+        ver = ".".join(str(v) for v in version)
+        want = ".".join(str(v) for v in MIN_CLI_VERSION)
+        sys.stdout.write(
+            f"  [警告] claude CLI {ver} 低於 {want}，多個行程同時續期 token 時\n"
+            f"         可能導致登入被撤銷（OAuth access token has been revoked）。\n"
+            f"         建議升級：npm install -g @anthropic-ai/claude-code\n"
+            f"         或先用序列模式執行：team.py --serial\n"
+        )
+
+
+def _flatten(messages: list[dict]) -> str:
+    """把 messages 陣列攤平成單一 prompt（CLI 後端一次只吃一段文字）。"""
+    parts = []
+    for m in messages:
+        if m["role"] == "assistant":
+            parts.append("# 你在上一輪的回答（原文，供你自己參考）\n" + m["content"])
+        else:
+            parts.append(m["content"])
+    return "\n\n".join(parts)
+
+
+async def _ask_cli(req: dict) -> tuple[dict, dict]:
+    from claude_agent_sdk import (
+        AssistantMessage, ClaudeAgentOptions, ResultMessage, TextBlock, query,
+    )
+
+    options = ClaudeAgentOptions(
+        system_prompt=req["system"],
+        model=CLI_MODEL,
+        effort=EFFORT,
+        thinking={"type": "adaptive"},
+        output_format={"type": "json_schema", "schema": req["schema"]},
+        # 只開放 WebSearch（可關），不給任何會動到檔案系統或執行指令的工具
+        allowed_tools=["WebSearch"] if WEB_SEARCH else [],
+        max_turns=10 if WEB_SEARCH else 6,   # 開搜尋要留房間給多輪查詢再收束成結構化輸出
+        permission_mode="dontAsk",  # 只信任 allowed_tools 白名單內的工具，其餘一律拒絕
+        setting_sources=[],        # 不載入使用者 / 專案設定與 hooks，避免干擾
+        load_timeout_ms=LOAD_TIMEOUT_MS,
+    )
+
+    texts: list[str] = []
+    result = None
+    async for message in query(prompt=_flatten(req["messages"]), options=options):
+        if isinstance(message, AssistantMessage):
+            if message.error:
+                raise BackendError(f"Claude CLI 回報錯誤：{message.error}")
+            texts += [b.text for b in message.content if isinstance(b, TextBlock)]
+        elif isinstance(message, ResultMessage):
+            result = message
+
+    if result is None:
+        raise BackendError("Claude CLI 沒有回傳結果訊息（可能是登入過期，試試 claude login）")
+    if result.is_error:
+        detail = "；".join(result.errors or []) or result.subtype
+        raise BackendError(f"Claude CLI 執行失敗：{detail}")
+
+    data = result.structured_output
+    if data is None:
+        data = _extract_json(result.result or "".join(texts))
+
+    raw = result.usage or {}
+    return data, {
+        "input_tokens": raw.get("input_tokens", 0),
+        "output_tokens": raw.get("output_tokens", 0),
+        "cache_read": raw.get("cache_read_input_tokens", 0),
+        "cache_created": raw.get("cache_creation_input_tokens", 0),
+        "cost_usd": result.total_cost_usd or 0.0,
+    }
+
+
+async def _ask_many_cli(requests: list[dict], on_done) -> dict:
+    async def one(req, delay: float):
+        if delay:
+            await asyncio.sleep(delay)
+        try:
+            data, usage = await _ask_cli(req)
+            on_done(req, None)
+            return req["key"], (data, usage, None)
+        except Exception as e:  # noqa: BLE001 — 單一分析師失敗不該拖垮整場會議
+            on_done(req, e)
+            return req["key"], (None, _empty_usage(), e)
+
+    if SERIAL:
+        return dict([await one(r, 0) for r in requests])
+
+    # 錯開啟動，避免多個 claude 行程同時搶著續期同一份登入
+    return dict(await asyncio.gather(
+        *(one(r, i * STAGGER_SECONDS) for i, r in enumerate(requests))
+    ))
+
+
+# --------------------------------------------------------------------------
+# 後端二：api（ANTHROPIC_API_KEY）
+# --------------------------------------------------------------------------
+
+_api_client = None
+
+
+def _preflight_api() -> None:
+    try:
+        import anthropic  # noqa: F401
+    except ImportError as e:
+        raise BackendError("缺少 anthropic 套件，請執行：pip install -r requirements.txt") from e
+    if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
+        raise BackendError(
+            "TEAM_BACKEND=api 需要 ANTHROPIC_API_KEY。\n"
+            "若不想用 API key，改用訂閱登入模式：TEAM_BACKEND=claude_cli（預設）"
+        )
+
+
+def _ask_api(req: dict) -> tuple[dict, dict]:
+    global _api_client
+    import anthropic
+
+    if _api_client is None:
+        _api_client = anthropic.Anthropic()
+
+    response = _api_client.messages.create(
+        model=API_MODEL,
+        max_tokens=MAX_TOKENS,
+        system=req["system"],
+        messages=req["messages"],
+        thinking={"type": "adaptive"},
+        output_config={
+            "effort": EFFORT,
+            "format": {"type": "json_schema", "schema": req["schema"]},
+        },
+        tools=([{"type": "web_search_20260209", "name": "web_search", "max_uses": 5}]
+               if WEB_SEARCH else []),
+        cache_control={"type": "ephemeral"},
+    )
+    # 開了搜尋後回應會混雜搜尋結果區塊，最終的結構化 JSON 一定是最後一個文字區塊
+    text_blocks = [b.text for b in response.content if b.type == "text"]
+    if not text_blocks:
+        raise BackendError("回應中沒有文字內容（可能整輪都在搜尋、沒有收束成結構化輸出）")
+    text = text_blocks[-1]
+    u = response.usage
+    return json.loads(text), {
+        "input_tokens": u.input_tokens,
+        "output_tokens": u.output_tokens,
+        "cache_read": u.cache_read_input_tokens,
+        "cache_created": u.cache_creation_input_tokens,
+        "cost_usd": 0.0,  # API 模式不回報金額，成本看 token 用量
+    }
+
+
+def _ask_many_api(requests: list[dict], on_done) -> dict:
+    def one(req):
+        try:
+            data, usage = _ask_api(req)
+            on_done(req, None)
+            return req["key"], (data, usage, None)
+        except Exception as e:  # noqa: BLE001
+            on_done(req, e)
+            return req["key"], (None, _empty_usage(), e)
+
+    with ThreadPoolExecutor(max_workers=len(requests)) as pool:
+        return dict(pool.map(one, requests))
+
+
+# --------------------------------------------------------------------------
+# 對外介面
+# --------------------------------------------------------------------------
+
+def preflight() -> None:
+    """開會前先檢查後端能不能用，早點噴出人看得懂的錯誤。"""
+    if BACKEND == "api":
+        _preflight_api()
+    elif BACKEND == "claude_cli":
+        _preflight_cli()
+    else:
+        raise BackendError(f"未知的 TEAM_BACKEND：{BACKEND}（可用：claude_cli、api）")
+
+
+def ask_many(requests: list[dict]) -> dict:
+    """
+    平行送出多個結構化請求。
+
+    每個 request 需含 key / label / system / messages / schema。
+    回傳 {key: (結果 dict 或 None, 用量 dict, 例外或 None)}，
+    單一分析師失敗不會中斷整場會議。
+    """
+    if not requests:
+        return {}
+
+    def on_done(req, error):
+        mark = "✗" if error else "✓"
+        tail = f" — {error}" if error else ""
+        sys.stdout.write(f"       {mark} {req['label']}{tail}\n")
+        sys.stdout.flush()
+
+    if BACKEND == "api":
+        return _ask_many_api(requests, on_done)
+    return asyncio.run(_ask_many_cli(requests, on_done))
