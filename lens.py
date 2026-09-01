@@ -57,6 +57,12 @@ _LENSES = {
 }
 
 
+def is_taiwan_symbol(symbol: str) -> bool:
+    """台股（含上櫃與加權指數）才適用台股大盤資料。"""
+    s = str(symbol or "").strip().upper()
+    return s.endswith((".TW", ".TWO")) or s == "^TWII"
+
+
 def coverage() -> dict:
     """每個視角看得到什麼 —— 讓主理人知道每個人是根據什麼在發言。"""
     return {aid: v["sees"] for aid, v in _LENSES.items()}
@@ -80,14 +86,25 @@ def for_analyst(packet: dict, analyst_id: str) -> str:
     ]
 
     if "market" in sections:
-        t, b = packet.get("taiex", {}), packet.get("market_breadth", {})
-        lines += [
-            "", "## 大盤",
-            f"- 加權指數：{_fmt(t.get('taiex'))}｜漲跌：{_fmt(t.get('change'))}"
-            f"｜成交金額：{_fmt(t.get('volume_amount'))}",
-            f"- 市場寬度：上漲 {_fmt(b.get('up'))}／下跌 {_fmt(b.get('down'))}"
-            f"／平盤 {_fmt(b.get('unchanged'))}",
-        ]
+        # 台股大盤資料只對台股有意義。拿台股寬度推論美股會得到看似有據、
+        # 實則無關的結論 —— 寧可明說沒有，也不要餵錯的背景。
+        if all(is_taiwan_symbol(s) for s in packet.get("symbols", [])):
+            t, b = packet.get("taiex", {}), packet.get("market_breadth", {})
+            lines += [
+                "", "## 大盤",
+                f"- 加權指數：{_fmt(t.get('taiex'))}｜漲跌：{_fmt(t.get('change'))}"
+                f"｜成交金額：{_fmt(t.get('volume_amount'))}",
+                f"- 市場寬度：上漲 {_fmt(b.get('up'))}／下跌 {_fmt(b.get('down'))}"
+                f"／平盤 {_fmt(b.get('unchanged'))}",
+            ]
+        else:
+            lines += [
+                "", "## 大盤",
+                "本次標的非台股。本系統的大盤資料只涵蓋台灣市場，對此標的沒有"
+                "參考價值，因此不提供 —— 餵錯的市場背景會得出看似有據、實則無關"
+                "的結論。你需要的市場背景（所屬市場指數位置、利率、資金流向）請"
+                "自行**搜尋**並附來源；查不到就據實下修信心並寫進 data_gaps。",
+            ]
 
     for sym in packet.get("symbols", []):
         tech = (packet.get("technicals") or {}).get(sym, {})

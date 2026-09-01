@@ -179,11 +179,14 @@ def build_market_packet(symbols: list[str], period: str = "1mo",
     print("  [資料] 抓取個股基本面...")
     fundamentals = {sym: fetch_stock_info(sym) for sym in symbols}
 
-    print("  [資料] 抓取大盤與市場寬度...")
+    # 台股大盤資料只對台股有意義，非台股標的不必浪費兩次網路呼叫
+    has_tw = any(lens.is_taiwan_symbol(s) for s in symbols)
+    if has_tw:
+        print("  [資料] 抓取大盤與市場寬度...")
     return {
         "symbols": symbols,
-        "taiex": fetch_taiex_summary(),
-        "market_breadth": fetch_market_breadth(),
+        "taiex": fetch_taiex_summary() if has_tw else {},
+        "market_breadth": fetch_market_breadth() if has_tw else {},
         "technicals": technicals,
         "fundamentals": fundamentals,
         "period": period,

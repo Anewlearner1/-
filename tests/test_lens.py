@@ -117,3 +117,45 @@ def test_coverage_reports_what_each_lens_sees():
     cov = lens.coverage()
     assert set(cov) == {"buffett", "lynch", "soros", "simons", "taleb"}
     assert "基本面" in cov["buffett"] and "技術面" in cov["simons"]
+
+
+# --------------------------------------------------------------------------
+# 市場背景必須與標的所屬市場相符
+# --------------------------------------------------------------------------
+
+US_PACKET = {
+    "symbols": ["APH"],
+    "taiex": {"taiex": 24150.3, "change": -180.2},
+    "market_breadth": {"up": 380, "down": 520, "unchanged": 90},
+    "technicals": {"APH": {"last_price": 158.55, "change_pct": 0.8,
+                           "period_high": 165.0, "period_low": 140.0}},
+    "fundamentals": {"APH": {"name": "Amphenol", "pe_ratio": 39.5,
+                             "sector": "Technology"}},
+    "period": "1mo", "interval": "1d", "collected_at": "t",
+}
+
+
+def test_us_stock_does_not_get_taiwan_index_as_market_context():
+    """拿台股寬度推論美股會得到看似有據、實則無關的結論。"""
+    t = lens.for_analyst(US_PACKET, "soros")
+    assert "加權指數" not in t
+    assert "24,150" not in t
+
+
+def test_us_stock_discloses_missing_market_context():
+    """沒有大盤資料要明說，並指引去查 —— 靜默省略會讓他以為不需要。"""
+    t = lens.for_analyst(US_PACKET, "soros")
+    assert "非台股" in t or "美股" in t
+    assert "搜尋" in t
+
+
+def test_taiwan_stock_still_gets_taiwan_market_context():
+    assert "加權指數" in lens.for_analyst(PACKET, "soros")
+
+
+@pytest.mark.parametrize("sym,is_tw", [
+    ("2330.TW", True), ("8027.TWO", True), ("^TWII", True),
+    ("APH", False), ("BRK-B", False), ("7203.T", False),
+])
+def test_market_detection(sym, is_tw):
+    assert lens.is_taiwan_symbol(sym) is is_tw
