@@ -20,6 +20,8 @@ from fetcher import (
     fetch_taiex_summary, fetch_yfinance_data,
 )
 import backends
+import gates
+import lens
 import payoff
 from backends import ask_many, describe as describe_backend, preflight
 from personas import (
@@ -190,12 +192,7 @@ def build_market_packet(symbols: list[str], period: str = "1mo",
     }
 
 
-def _fmt(value, suffix: str = "") -> str:
-    if value is None:
-        return "無資料"
-    if isinstance(value, float):
-        return f"{value:,.2f}{suffix}"
-    return f"{value}{suffix}"
+_fmt = lens._fmt  # 呈現格式由 lens 統一擁有，避免兩處各寫一份
 
 
 def format_packet(packet: dict) -> str:
@@ -589,20 +586,36 @@ def run_discussion(symbols: list[str], period: str = "1mo",
         packet = build_market_packet(symbols, period=period, interval=interval)
     else:
         print(f"  [資料] 使用既有資料包（擷取於 {packet.get('collected_at', '未知時間')}）")
-    packet_text = format_packet(packet)
+    ok, why = gates.packet_is_usable(packet)
+    if not ok:
+        print(f"\n  [中止] {why}")
+        return {
+            "meeting_time": started.isoformat(), "symbols": symbols,
+            "horizon_days": horizon_days,
+        "lens_coverage": lens.coverage(), "aborted": why,
+            "consensus": {s_: {"error": why} for s_ in symbols},
+            "round1": {}, "round2": {}, "market_packet": packet,
+            "usage": {"llm_calls": 0}, "disclaimer": DISCLAIMER,
+        }
+
     usages: list[dict] = []
 
     # ---- Round 1：各自獨立發言 ----
     web_search = backends.WEB_SEARCH  # 執行當下才讀，不能在模組載入時就綁死
     print(f"\n  [R1] 五位分析師獨立發言中（平行呼叫{'，含網路搜尋' if web_search else ''}）...")
-    r1_prompt = _round1_prompt(packet_text, web_search_enabled=web_search,
-                               horizon_days=horizon_days)
+    # 每位分析師只拿符合其學派的資料切片：分歧才會來自證據差異而非人格差異
+    prompts = {
+        a["id"]: _round1_prompt(lens.for_analyst(packet, a["id"]),
+                                web_search_enabled=web_search,
+                                horizon_days=horizon_days)
+        for a in ANALYSTS
+    }
     replies = ask_many([
         {
             "key": a["id"],
             "label": a["name"],
             "system": build_persona_system_prompt(a, web_search_enabled=web_search),
-            "messages": [{"role": "user", "content": r1_prompt}],
+            "messages": [{"role": "user", "content": prompts[a["id"]]}],
             "schema": ROUND1_SCHEMA,
         }
         for a in ANALYSTS
@@ -617,9 +630,17 @@ def run_discussion(symbols: list[str], period: str = "1mo",
             continue
         round1[aid] = data
         histories[aid] = [
-            {"role": "user", "content": r1_prompt},
+            {"role": "user", "content": prompts[aid]},
             {"role": "assistant", "content": json.dumps(data, ensure_ascii=False)},
         ]
+
+    if cross_examine:
+        contested, gate_reason = gates.needs_cross_exam(round1, symbols)
+        if not contested:
+            print(f"  [R2] 略過 —— {gate_reason}")
+            cross_examine = False
+        else:
+            print(f"  [R2] {gate_reason}")
 
     if not cross_examine:
         final = {
@@ -696,6 +717,7 @@ def run_discussion(symbols: list[str], period: str = "1mo",
         "moderator": "使用者本人（AI 不代為拍板）",
         "voting_rule": "完全平權：五人一人一票，以信心度加權後取平均",
         "horizon_days": horizon_days,
+        "lens_coverage": lens.coverage(),
         "rounds": ["opening", "cross_examination"] if cross_examine else ["opening"],
         "backend": describe_backend(),
         "analysts": [
