@@ -71,16 +71,30 @@ def _fetch_twse_institutional_day(d: date) -> dict[str, dict]:
     if not data or data.get("stat") != "OK":
         return out
     fields = data.get("fields", [])
-    foreign_i = _find_col(fields, "外資", "買賣超") or _find_col(fields, "外陸資", "買賣超")
-    trust_i = _find_col(fields, "投信", "買賣超")
-    dealer_i = _find_col(fields, "自營商", "買賣超") if _find_col(fields, "自營商", "買賣超", "自行") is None else \
-        _find_col(fields, "自營商", "買賣超", "合計")
+    # Column names overlap heavily as substrings (e.g. "外陸資買賣超股數(不含外資自營商)"
+    # contains both "自營商" and "外資自營商"), so these are matched by *prefix*, not
+    # "keyword anywhere in the string" — the latter silently cross-matches columns.
+    # "外陸資...(不含外資自營商)" and "外資自營商買賣超股數" are reported separately; sum both
+    # for the conventional "外資買賣超" total when both are present.
+    foreign_main_i = next((i for i, f in enumerate(fields) if f.startswith("外陸資") and "買賣超" in f), None)
+    foreign_dealer_i = next((i for i, f in enumerate(fields) if f.startswith("外資自營商") and "買賣超" in f), None)
+    trust_i = next((i for i, f in enumerate(fields) if f.startswith("投信") and "買賣超" in f), None)
+    # "自營商買賣超股數" (the combined dealer total) — excludes the "(自行買賣)"/"(避險)" breakdown
+    # columns, which also start with "自營商" and contain "買賣超".
+    dealer_i = next((i for i, f in enumerate(fields)
+                     if f.startswith("自營商") and "買賣超" in f and "自行" not in f and "避險" not in f), None)
     total_i = _find_col(fields, "三大法人", "買賣超")
     code_i = 0
     for row in data.get("data", []):
         code = str(row[code_i]).strip()
+        foreign_main = _num(row[foreign_main_i]) if foreign_main_i is not None else None
+        foreign_dealer = _num(row[foreign_dealer_i]) if foreign_dealer_i is not None else None
+        if foreign_main is not None and foreign_dealer is not None:
+            foreign_net = foreign_main + foreign_dealer
+        else:
+            foreign_net = foreign_main if foreign_main is not None else foreign_dealer
         out[code] = {
-            "foreign_net": _num(row[foreign_i]) if foreign_i is not None else None,
+            "foreign_net": foreign_net,
             "trust_net": _num(row[trust_i]) if trust_i is not None else None,
             "dealer_net": _num(row[dealer_i]) if dealer_i is not None else None,
             "total_net": _num(row[total_i]) if total_i is not None else None,
@@ -90,33 +104,46 @@ def _fetch_twse_institutional_day(d: date) -> dict[str, dict]:
 
 
 def _fetch_twse_margin_day(d: date) -> dict[str, dict]:
-    """Per-stock 融資融券餘額 for one trading day. Units: shares (股)."""
+    """Per-stock 融資融券餘額 for one trading day. Units: shares (股).
+
+    TWSE reports 融資 (margin) and 融券 (short) as one combined per-stock table
+    with duplicate column names ("買進"/"賣出"/"前日餘額"/"今日餘額" each appear
+    twice — margin columns first, short columns second), rather than as two
+    separate tables. We locate the columns positionally: the first occurrence
+    of "今日餘額"/"前日餘額" is 融資, the second (if present) is 融券.
+    """
     data = _safe_get(TWSE_MARGIN, {"date": d.strftime("%Y%m%d"), "selectType": "ALL", "response": "json"})
     out: dict[str, dict] = {}
     if not data or data.get("stat") != "OK":
         return out
 
-    tables = data.get("tables")
-    if tables:
-        for table in tables:
-            fields = table.get("fields", [])
-            code_i = _find_col(fields, "代號") or _find_col(fields, "股票代號") or 0
-            title = table.get("title", "")
-            is_margin = "融資" in title or any("融資" in f for f in fields)
-            bal_i = _find_col(fields, "今日餘額")
-            prev_i = _find_col(fields, "前日餘額")
-            for row in table.get("data", []):
-                code = str(row[code_i]).strip()
-                bal = _num(row[bal_i]) if bal_i is not None else None
-                prev = _num(row[prev_i]) if prev_i is not None else None
-                chg = (bal - prev) if (bal is not None and prev is not None) else None
-                entry = out.setdefault(code, {"date": d.isoformat()})
-                if is_margin:
-                    entry["margin_balance"] = bal
-                    entry["margin_balance_chg"] = chg
-                else:
-                    entry["short_balance"] = bal
-                    entry["short_balance_chg"] = chg
+    for table in data.get("tables") or []:
+        fields = table.get("fields", [])
+        code_i = _find_col(fields, "代號")
+        if code_i is None:
+            continue  # market-level summary table has no per-stock code column
+        today_idx = [i for i, f in enumerate(fields) if "今日餘額" in f]
+        prev_idx = [i for i, f in enumerate(fields) if "前日餘額" in f]
+        if not today_idx:
+            continue
+        margin_today, margin_prev = today_idx[0], (prev_idx[0] if prev_idx else None)
+        short_today = today_idx[1] if len(today_idx) > 1 else None
+        short_prev = prev_idx[1] if len(prev_idx) > 1 else None
+
+        for row in table.get("data", []):
+            code = str(row[code_i]).strip()
+            entry = out.setdefault(code, {"date": d.isoformat()})
+
+            m_bal = _num(row[margin_today])
+            m_prev = _num(row[margin_prev]) if margin_prev is not None else None
+            entry["margin_balance"] = m_bal
+            entry["margin_balance_chg"] = (m_bal - m_prev) if (m_bal is not None and m_prev is not None) else None
+
+            if short_today is not None:
+                s_bal = _num(row[short_today])
+                s_prev = _num(row[short_prev]) if short_prev is not None else None
+                entry["short_balance"] = s_bal
+                entry["short_balance_chg"] = (s_bal - s_prev) if (s_bal is not None and s_prev is not None) else None
     return out
 
 
