@@ -59,6 +59,27 @@
 | 風險長 | 有否決權：允許的最大曝險、否決標的、要求修正 |
 | 投資組合經理 | 最終指令：目標權重、停損、信心，誠實評估目標進度 |
 
+### 三情境估值模型（樂觀/中立/保守）
+
+跟目標數學、風控引擎一樣，這是**程式算出來的，不是 LLM 猜的**（`us_team/valuation.py`）。
+每輪跑之前，會用 yfinance 抓到的基本面自動算出每檔標的的一年期目標價：
+
+- **有獲利的公司**：用本益比法。`EPS(TTM) × (1+成長率)^年期 × 出場本益比`
+- **虧損/早期公司**：本益比不適用，改用市銷率法。`隱含營收(TTM) × (1+成長率)^年期 × 出場市銷率 ÷ 流通股數`
+- 樂觀情境 = 基準成長率 **+15 個百分點**、出場倍數 **×1.3**
+- 保守情境 = 基準成長率 **-15 個百分點**、出場倍數 **×0.6**（且成長率有 -30% 下限，不會因為基準已經是負成長而讓保守情境「變好看」）
+- 三情境用機率加權（預設樂觀 25% / 中立 50% / 保守 25%）算出一個機率加權目標價與隱含報酬
+
+這張表會放進每一輪的共用市場資料，**基本面分析師**與 **PM** 的角色指令都要求他們交叉參考：
+機率加權隱含報酬為負卻還要買，PM 必須說明為什麼不同意這個機械式估值。
+所有假設都能用環境變數調（見 `.env.example` 的 `VALUATION_*`）。
+
+單獨查詢（不跑整個團隊、不呼叫 LLM）：
+
+```bash
+python run_us_team.py --valuate FCEL NVDA AAPL
+```
+
 ### 程式強制的硬性風控
 
 不管 LLM 說什麼，`us_team/risk.py` 都會把指令壓回這些限制內（可用環境變數調整）：
@@ -80,6 +101,7 @@ export $(grep -v '^#' .env | xargs)
 python run_us_team.py --once --no-trade   # 先看團隊怎麼想，不動帳戶
 python run_us_team.py --once              # 一輪完整流程，寫入模擬帳戶
 python run_us_team.py --status            # 看持股與目標進度（不呼叫 LLM）
+python run_us_team.py --valuate FCEL NVDA # 查三情境估值（不呼叫 LLM）
 python run_us_team.py --interval 240      # 每 4 小時一輪；MARKET_OPEN_ONLY=1 只在美股盤中
 python run_us_team.py --reset             # 重新開一個模擬帳戶
 ```
@@ -113,9 +135,10 @@ python -m pytest tests -q
 
 ```
 us_team/
-  config.py     目標、觀察清單、風控上限、模型設定（皆可用環境變數覆寫）
+  config.py     目標、觀察清單、風控上限、估值假設、模型設定（皆可用環境變數覆寫）
   goal.py       目標數學：所需年化、等速路徑、落後/超前判定
   data.py       yfinance 資料 + 波段交易特徵（RS vs SPY、ATR、52 週高、MA50/200）
+  valuation.py  三情境估值模型（樂觀/中立/保守目標價，程式計算）
   portfolio.py  模擬帳戶（JSON 持久化）
   risk.py       硬性風控引擎：目標權重 → 股數，套用所有上限
   schemas.py    PM 與風險長的結構化輸出 schema（Pydantic）

@@ -5,6 +5,7 @@ Usage:
     python run_us_team.py --once              # one full team cycle, then exit
     python run_us_team.py --once --no-trade   # analyse and decide, but do not touch the paper portfolio
     python run_us_team.py --status            # print portfolio + goal progress (no LLM calls)
+    python run_us_team.py --valuate FCEL NVDA # print bull/base/bear price targets (no LLM calls)
     python run_us_team.py --interval 240      # run every 4 hours
     python run_us_team.py --reset             # start a fresh paper portfolio (asks for confirmation)
 
@@ -27,12 +28,13 @@ from datetime import datetime, time as dtime
 from zoneinfo import ZoneInfo
 
 from us_team.config import GOAL, RUNTIME
-from us_team.data import fetch_history
+from us_team.data import fetch_fundamentals, fetch_history
 from us_team.goal import describe_goal, evaluate_goal, milestones
 from us_team.llm import api_key_present
 from us_team.portfolio import describe_portfolio
 from us_team.report import save_report, send_discord, send_error, send_startup
 from us_team.team import load_portfolio, portfolio_path, run_team
+from us_team.valuation import batch_estimate, describe_valuations
 
 ET = ZoneInfo("America/New_York")
 MARKET_OPEN = dtime(9, 30)
@@ -68,6 +70,20 @@ def show_status() -> None:
     for m in milestones(GOAL, pf.start_date):
         print(f"  第 {m['month']:2d} 個月: ${m['equity_target']:,.0f}")
     print(f"\n狀態檔: {portfolio_path().resolve()}")
+
+
+def show_valuation(symbols: list[str]) -> None:
+    """Print bull/base/bear price targets for the given symbols. No LLM calls."""
+    symbols = [s.upper() for s in symbols]
+    hist = fetch_history(symbols, period="5d", interval="1d")
+    prices = {s: float(df["Close"].dropna().iloc[-1]) for s, df in hist.items() if not df.empty}
+    fundamentals = fetch_fundamentals(symbols)
+    estimates = batch_estimate(fundamentals, prices)
+    skipped = [s for s in symbols if s not in estimates]
+    print("\n" + describe_valuations(estimates, skipped=skipped))
+    missing_price = [s for s in symbols if s not in prices]
+    if missing_price:
+        print(f"\n無報價（下載失敗或代碼錯誤）: {', '.join(missing_price)}")
 
 
 def reset_portfolio() -> None:
@@ -128,11 +144,15 @@ def main() -> None:
     parser.add_argument("--interval", type=int, default=240, metavar="MINUTES", help="執行間隔（分鐘），預設 240")
     parser.add_argument("--no-trade", action="store_true", help="只分析與決策，不更動模擬帳戶")
     parser.add_argument("--status", action="store_true", help="顯示投資組合與目標進度（不呼叫 LLM）")
+    parser.add_argument("--valuate", nargs="+", metavar="SYMBOL", help="印出指定標的的三情境估值（不呼叫 LLM）")
     parser.add_argument("--reset", action="store_true", help="重置模擬帳戶")
     args = parser.parse_args()
 
     if args.status:
         show_status()
+        return
+    if args.valuate:
+        show_valuation(args.valuate)
         return
     if args.reset:
         reset_portfolio()

@@ -107,6 +107,27 @@ class RiskLimits:
 
 
 # --------------------------------------------------------------------------- #
+# Three-scenario valuation model (optimistic / neutral / conservative)
+# --------------------------------------------------------------------------- #
+@dataclass(frozen=True)
+class ValuationAssumptions:
+    horizon_years: float = _env_float("VALUATION_HORIZON_YEARS", 1.0)
+    # Bull/bear growth is base growth +/- these spreads (percentage points, not a multiplier,
+    # so a negative base growth rate still gets worse in the bear case).
+    bull_growth_spread: float = _env_float("VALUATION_BULL_GROWTH_SPREAD", 0.15)
+    bear_growth_spread: float = _env_float("VALUATION_BEAR_GROWTH_SPREAD", 0.15)
+    growth_floor: float = _env_float("VALUATION_GROWTH_FLOOR", -0.30)
+    growth_cap: float = _env_float("VALUATION_GROWTH_CAP", 1.50)
+    # Exit multiple is the base (current) multiple scaled by these factors.
+    bull_multiple_factor: float = _env_float("VALUATION_BULL_MULTIPLE_FACTOR", 1.30)
+    bear_multiple_factor: float = _env_float("VALUATION_BEAR_MULTIPLE_FACTOR", 0.60)
+    default_growth_if_missing: float = _env_float("VALUATION_DEFAULT_GROWTH", 0.10)
+    prob_bull: float = _env_float("VALUATION_PROB_BULL", 0.25)
+    prob_base: float = _env_float("VALUATION_PROB_BASE", 0.50)
+    prob_bear: float = _env_float("VALUATION_PROB_BEAR", 0.25)
+
+
+# --------------------------------------------------------------------------- #
 # Model / runtime
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True)
@@ -131,5 +152,6 @@ class RuntimeConfig:
 
 GOAL = GoalConfig()
 RISK = RiskLimits()
+VALUATION = ValuationAssumptions()
 MODEL = ModelConfig()
 RUNTIME = RuntimeConfig()

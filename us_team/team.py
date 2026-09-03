@@ -1,6 +1,6 @@
 """Orchestrator: one full team cycle.
 
-    data → stop-loss sweep → 4 analysts (parallel) → bull → bear
+    data → valuation scenarios → stop-loss sweep → 4 analysts (parallel) → bull → bear
          → risk manager (structured) → PM (structured)
          → deterministic risk engine → paper fills → report
 """
@@ -18,6 +18,7 @@ from .portfolio import Portfolio, describe_portfolio
 from .risk import RiskReport, apply_fills, describe_limits, plan_orders
 from .roles import ANALYSTS, BEAR, BULL, PM, RISK as RISK_ROLE
 from .schemas import PMDecision, RiskVerdict
+from .valuation import ValuationEstimate, batch_estimate, describe_valuations
 
 
 def portfolio_path() -> Path:
@@ -28,9 +29,11 @@ def load_portfolio() -> Portfolio:
     return Portfolio.load_or_create(portfolio_path(), GOAL.start_capital, GOAL.start_date)
 
 
-def _shared_context(packet: MarketPacket, pf_text: str, goal_text: str, limits_text: str) -> str:
+def _shared_context(packet: MarketPacket, pf_text: str, goal_text: str, limits_text: str,
+                    valuation_text: str) -> str:
     return "\n\n".join([
         format_packet(packet),
+        "# 三情境估值模型（樂觀/中立/保守，程式計算）\n" + valuation_text,
         "# 目前投資組合（模擬帳戶）\n" + pf_text,
         "# 委託目標進度\n" + goal_text,
         "# 系統硬性風控（程式強制執行）\n" + limits_text,
@@ -60,8 +63,15 @@ def run_team(no_trade: bool = False, packet: MarketPacket | None = None,
 
     goal = evaluate_goal(equity_before, GOAL, pf.start_date, as_of=now.date())
     pf_summary = pf.summary(prices)
-    shared = _shared_context(packet, describe_portfolio(pf_summary), describe_goal(goal), describe_limits(RISK))
+
+    valuations = batch_estimate(packet.fundamentals, prices)
+    valuation_skipped = [s for s in packet.fundamentals if s not in valuations]
+    valuation_text = describe_valuations(valuations, skipped=valuation_skipped)
+
+    shared = _shared_context(packet, describe_portfolio(pf_summary), describe_goal(goal),
+                             describe_limits(RISK), valuation_text)
     print(f"  [組合] 權益 ${equity_before:,.2f}｜回撤 {pf_summary['drawdown_pct']:.1f}%｜目標狀態 {goal.status}")
+    print(f"  [估值] {len(valuations)}/{len(packet.fundamentals)} 檔完成三情境估值")
 
     # ---------------- 2. Analysts in parallel ----------------
     print(f"  [團隊] 四位分析師並行分析中 ({llm.model})...")
@@ -147,6 +157,8 @@ def run_team(no_trade: bool = False, packet: MarketPacket | None = None,
         "goal_text": describe_goal(goal_after),
         "milestones": milestones(GOAL, pf.start_date),
         "portfolio": pf.summary(prices),
+        "valuations": {sym: v.to_dict() for sym, v in valuations.items()},
+        "valuation_text": valuation_text,
         "stop_fills": [t.__dict__ for t in stop_fills],
         "analysts": {r.key: {"title": r.title, "report": analyst_reports[r.key]} for r in ANALYSTS},
         "bull": bull,

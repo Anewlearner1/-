@@ -41,6 +41,17 @@ def build_markdown(result: dict) -> str:
         for t in result["stop_fills"]:
             lines.append(f"- SELL {t['symbol']} {t['shares']:g} @ {t['price']:.2f}｜實現 {t['realized_pnl']:+.2f}")
 
+    if result.get("valuations"):
+        lines += ["", "## 三情境估值模型（樂觀/中立/保守）"]
+        lines.append("| 標的 | 方法 | 現價 | 保守目標價 | 中立目標價 | 樂觀目標價 | 機率加權目標價 | 加權隱含報酬 |")
+        lines.append("|---|---|---:|---:|---:|---:|---:|---:|")
+        for sym, v in result["valuations"].items():
+            lines.append(
+                f"| {sym} | {v['method']} | {v['current_price']} | {v['bear']['target_price']} | "
+                f"{v['base']['target_price']} | {v['bull']['target_price']} | "
+                f"{v['probability_weighted_price']} | {v['probability_weighted_return_pct']:+.0f}% |"
+            )
+
     lines += [
         "",
         f"## PM 決策 — 立場: {dec['market_stance']}",
