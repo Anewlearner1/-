@@ -1,0 +1,176 @@
+{
+  "cash": 6914.960000000004,
+  "start_capital": 30000.0,
+  "start_date": "2026-09-03",
+  "positions": {
+    "AEHR": {
+      "symbol": "AEHR",
+      "shares": 69.0,
+      "avg_cost": 77.45,
+      "stop_loss": 63.51,
+      "opened_at": "2026-09-03T12:17:07",
+      "thesis": "AI處理器/矽光子/SiC三引擎訂單動能真實可驗證，FY27財測大幅上修；三情境估值模型機率加權目標價 $102.46（保守成長假設，+32%）"
+    },
+    "COHR": {
+      "symbol": "COHR",
+      "shares": 12.0,
+      "avg_cost": 284.76,
+      "stop_loss": 227.81,
+      "opened_at": "2026-09-03T14:23:27",
+      "thesis": "訂單能見度到2028年、EPS成長加速(59%→74%)、營益率擴張，基本面四檔最強；估值模型顯示負報酬主因成長假設低於forward PE隱含的市場共識(~129%)，非真實高估證據，故以較小部位、較寬停損建倉而非完全放棄"
+    },
+    "BE": {
+      "symbol": "BE",
+      "shares": 13.0,
+      "avg_cost": 217.95,
+      "stop_loss": 185.26,
+      "opened_at": "2026-09-04T10:16:56",
+      "thesis": "Q2營收+166%大幅超預期、FY26財測二度上修，Oracle 2.8GW+Brookfield $25億框架等具體驗證；用公司自身財測成長率估值模型顯示現價接近公允（-1%，本輪最健康）；主要風險是做空機構指控的鈧供應鏈/循環融資疑慮尚未獨立驗證，故用小部位+緊停損因應頭條風險"
+    },
+    "ANET": {
+      "symbol": "ANET",
+      "shares": 23.0,
+      "avg_cost": 191.44,
+      "stop_loss": 166.55,
+      "opened_at": "2026-09-04T10:33:54",
+      "thesis": "首季破$30億營收(+37.7%)，FY26財測上修至+40%成長，63%毛利率/48-49%營益率七檔最佳；估值模型內部假設一致下顯示+6%正報酬；財報後股價實際上漲+12%，區別於同業'打敗預期仍被賣'的模式"
+    },
+    "TSM": {
+      "symbol": "TSM",
+      "shares": 10.0,
+      "avg_cost": 411.92,
+      "stop_loss": 350.13,
+      "opened_at": "2026-09-04T10:50:37",
+      "thesis": "全球先進製程近乎壟斷、Q2淨利+77.4% YoY、67.7%毛利率、零槓桿；估值模型接近打平；主要風險為台灣地緣政治，已用部位大小反映"
+    },
+    "EGO": {
+      "symbol": "EGO",
+      "shares": 68.0,
+      "avg_cost": 43.65,
+      "stop_loss": 37.1,
+      "opened_at": "2026-09-04T11:31:54",
+      "thesis": "金價歷史新高($5,500/oz)+主要投行看多至年底$4,900-6,000，與AI主題完全不相關的分散來源；trailing PE僅6.56x全場最便宜，estimate model保守假設下仍+15%；Skouries商轉(Q4guidance)有十年延宕史，視為期權而非基本盤，故用適中部位"
+    }
+  },
+  "trades": [
+    {
+      "timestamp": "2026-09-03T12:17:07",
+      "symbol": "AEHR",
+      "side": "BUY",
+      "shares": 69.0,
+      "price": 77.45,
+      "value": 5344.05,
+      "reason": "BUY 目標 18%｜信心 8/10",
+      "realized_pnl": 0.0
+    },
+    {
+      "timestamp": "2026-09-03T14:23:27",
+      "symbol": "COHR",
+      "side": "BUY",
+      "shares": 12.0,
+      "price": 284.76,
+      "value": 3417.12,
+      "reason": "BUY 目標 12%｜信心 6/10",
+      "realized_pnl": 0.0
+    },
+    {
+      "timestamp": "2026-09-04T10:16:56",
+      "symbol": "BE",
+      "side": "BUY",
+      "shares": 13.0,
+      "price": 217.95,
+      "value": 2833.35,
+      "reason": "BUY 目標 10%｜信心 6/10",
+      "realized_pnl": 0.0
+    },
+    {
+      "timestamp": "2026-09-04T10:33:54",
+      "symbol": "ANET",
+      "side": "BUY",
+      "shares": 23.0,
+      "price": 191.44,
+      "value": 4403.12,
+      "reason": "BUY 目標 15%｜信心 8/10",
+      "realized_pnl": 0.0
+    },
+    {
+      "timestamp": "2026-09-04T10:50:37",
+      "symbol": "TSM",
+      "side": "BUY",
+      "shares": 10.0,
+      "price": 411.92,
+      "value": 4119.2,
+      "reason": "BUY 目標 15%｜信心 7/10",
+      "realized_pnl": 0.0
+    },
+    {
+      "timestamp": "2026-09-04T11:31:54",
+      "symbol": "EGO",
+      "side": "BUY",
+      "shares": 68.0,
+      "price": 43.65,
+      "value": 2968.2,
+      "reason": "BUY 目標 10%｜信心 7/10",
+      "realized_pnl": 0.0
+    }
+  ],
+  "equity_history": [
+    {
+      "timestamp": "2026-09-03T06:54:49",
+      "equity": 30000.0,
+      "cash": 30000.0
+    },
+    {
+      "timestamp": "2026-09-03T12:17:07",
+      "equity": 30000.0,
+      "cash": 24655.95
+    },
+    {
+      "timestamp": "2026-09-03T14:10:05",
+      "equity": 30000.0,
+      "cash": 24655.95
+    },
+    {
+      "timestamp": "2026-09-03T14:16:51",
+      "equity": 30000.0,
+      "cash": 24655.95
+    },
+    {
+      "timestamp": "2026-09-03T14:23:27",
+      "equity": 30000.0,
+      "cash": 21238.83
+    },
+    {
+      "timestamp": "2026-09-04T10:16:56",
+      "equity": 30000.0,
+      "cash": 18405.48
+    },
+    {
+      "timestamp": "2026-09-04T10:29:06",
+      "equity": 30000.0,
+      "cash": 18405.48
+    },
+    {
+      "timestamp": "2026-09-04T10:33:54",
+      "equity": 30000.0,
+      "cash": 14002.36
+    },
+    {
+      "timestamp": "2026-09-04T10:49:54",
+      "equity": 30000.0,
+      "cash": 14002.36
+    },
+    {
+      "timestamp": "2026-09-04T10:50:37",
+      "equity": 30000.0,
+      "cash": 9883.16
+    },
+    {
+      "timestamp": "2026-09-04T11:31:54",
+      "equity": 30000.0,
+      "cash": 6914.96
+    }
+  ],
+  "peak_equity": 30000.000000000004,
+  "realized_pnl": 0.0
+}

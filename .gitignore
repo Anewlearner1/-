@@ -2,5 +2,8 @@ __pycache__/
 *.pyc
 .env
 reports/
-state/
 .pytest_cache/
+
+# state/portfolio.json IS tracked (see below) so the paper account survives
+# across sessions/containers — the scheduled weekday check-in depends on it.
+state/*.tmp
