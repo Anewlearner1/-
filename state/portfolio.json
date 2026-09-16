@@ -1,5 +1,5 @@
 {
-  "cash": 6914.960000000004,
+  "cash": 7626.440000000002,
   "start_capital": 30000.0,
   "start_date": "2026-09-03",
   "positions": {
@@ -10,14 +10,6 @@
       "stop_loss": 63.51,
       "opened_at": "2026-09-03T12:17:07",
       "thesis": "AI處理器/矽光子/SiC三引擎訂單動能真實可驗證，FY27財測大幅上修；三情境估值模型機率加權目標價 $102.46（保守成長假設，+32%）"
-    },
-    "COHR": {
-      "symbol": "COHR",
-      "shares": 12.0,
-      "avg_cost": 284.76,
-      "stop_loss": 227.81,
-      "opened_at": "2026-09-03T14:23:27",
-      "thesis": "訂單能見度到2028年、EPS成長加速(59%→74%)、營益率擴張，基本面四檔最強；估值模型顯示負報酬主因成長假設低於forward PE隱含的市場共識(~129%)，非真實高估證據，故以較小部位、較寬停損建倉而非完全放棄"
     },
     "BE": {
       "symbol": "BE",
@@ -50,6 +42,14 @@
       "stop_loss": 37.1,
       "opened_at": "2026-09-04T11:31:54",
       "thesis": "金價歷史新高($5,500/oz)+主要投行看多至年底$4,900-6,000，與AI主題完全不相關的分散來源；trailing PE僅6.56x全場最便宜，estimate model保守假設下仍+15%；Skouries商轉(Q4guidance)有十年延宕史，視為期權而非基本盤，故用適中部位"
+    },
+    "LITE": {
+      "symbol": "LITE",
+      "shares": 3.0,
+      "avg_cost": 842.84,
+      "stop_loss": 691.13,
+      "opened_at": "2026-09-16T10:14:49",
+      "thesis": "COHR/LITE同業轉換：LITE的Q4非GAAP EPS $3.23年化與下季財測$4.20年化重建出自洽的估值讀數（市場隱含成長30%幾乎打平），毛利率50.4%提前達標，52週+670%後現價距高點僅-15%屬健康回檔"
     }
   },
   "trades": [
@@ -112,6 +112,26 @@
       "value": 2968.2,
       "reason": "BUY 目標 10%｜信心 7/10",
       "realized_pnl": 0.0
+    },
+    {
+      "timestamp": "2026-09-16T10:14:49",
+      "symbol": "COHR",
+      "side": "SELL",
+      "shares": 12.0,
+      "price": 270.0,
+      "value": 3240.0,
+      "reason": "PM主動換股：讓位給估值體質更乾淨的同業LITE，非停損觸發",
+      "realized_pnl": -177.1199999999999
+    },
+    {
+      "timestamp": "2026-09-16T10:14:49",
+      "symbol": "LITE",
+      "side": "BUY",
+      "shares": 3.0,
+      "price": 842.84,
+      "value": 2528.52,
+      "reason": "BUY 目標 13%｜信心 7/10",
+      "realized_pnl": 0.0
     }
   ],
   "equity_history": [
@@ -169,8 +189,13 @@
       "timestamp": "2026-09-04T11:31:54",
       "equity": 30000.0,
       "cash": 6914.96
+    },
+    {
+      "timestamp": "2026-09-16T10:14:49",
+      "equity": 29822.88,
+      "cash": 7626.44
     }
   ],
   "peak_equity": 30000.000000000004,
-  "realized_pnl": 0.0
+  "realized_pnl": -177.1199999999999
 }
