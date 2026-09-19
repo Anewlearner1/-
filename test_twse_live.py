@@ -277,7 +277,7 @@ def test_outstanding_in_build(root: Path) -> None:
     (root / "outs.csv").write_text(
         "權證代號,流通在外數量,發行數量\n030079,3500,10000\n030081,9000,10000\n",
         encoding="utf-8-sig")
-    _, df = T.build_table(days=1, static_path="static.csv", gap=0.0,
+    _, df = T.build_table(twse_static=False, days=1, static_path="static.csv", gap=0.0,
                           outstanding_csv=str(root / "outs.csv"))
     d = df.set_index("warrant_code")
     check(d.loc["030079", "outstanding_pct"] == 35.0,
@@ -287,7 +287,7 @@ def test_outstanding_in_build(root: Path) -> None:
     check(d.loc["030081", "outstanding_pct"] == 22.0,
           "static.csv 已有 22，檔案的 90 不覆蓋既有值")
 
-    _, df2 = T.build_table(days=1, static_path=None, gap=0.0,
+    _, df2 = T.build_table(twse_static=False, days=1, static_path=None, gap=0.0,
                            outstanding_csv=str(root / "outs.csv"))
     d2 = df2.set_index("warrant_code")
     check(d2.loc["030081", "outstanding_pct"] == 90.0,
@@ -296,7 +296,7 @@ def test_outstanding_in_build(root: Path) -> None:
 
     # 使用者打錯檔名要立刻知道，不能默默當成「沒有這份資料」
     try:
-        T.build_table(days=1, gap=0.0, outstanding_csv=str(root / "missing.csv"))
+        T.build_table(twse_static=False, days=1, gap=0.0, outstanding_csv=str(root / "missing.csv"))
         check(False, "指定的檔案不存在時應報錯")
     except T.TwseError as e:
         check("讀不到流通在外資料檔" in str(e), "指定的檔案不存在時明確報錯")
@@ -305,11 +305,113 @@ def test_outstanding_in_build(root: Path) -> None:
     real = T.fetch_outstanding
     T.fetch_outstanding = lambda *a, **k: (_ for _ in ()).throw(T.ThrottledError("模擬被擋"))
     try:
-        _, df4 = T.build_table(days=1, gap=0.0, with_outstanding=True)
+        _, df4 = T.build_table(twse_static=False, days=1, gap=0.0, with_outstanding=True)
         check(len(df4) == 4 and df4["outstanding_pct"].isna().all(),
               "線上抓流通在外失敗時只留空，不中斷整批")
     finally:
         T.fetch_outstanding = real
+
+
+# 使用者在自己的網路上跑 /rwd/zh/stock/warrantStock 實際回傳的欄位（一字不改）
+REAL_STATIC_FIELDS = ['權證代號', '權證簡稱', '收盤價', '漲跌', '標的代號', '標的名稱',
+                      '收盤價/指數', '漲跌', '權證類型', '履約方式', '上市日期',
+                      '履約開始日', '最後交易日', '履約截止日', '行使比例',
+                      '履約價格(元)/點數', '上限價格(元)/點數', '下限價格(元)/點數']
+REAL_STATIC_ROWS = [
+    ["030079", "南亞統一59購01", "20.00", "0.00", "1303", "南亞", "238.00", "1.50",
+     "認購", "歐式", "114/09/18", "115/09/18", "116/03/17", "116/03/18", "0.010",
+     "2,600.00", "--", "--"],
+    ["070001", "台積電群益5A售12", "0.80", "-0.02", "2330", "台積電", "2,400.00", "5.00",
+     "認售", "歐式", "115/01/05", "115/02/05", "116/02/09", "116/02/10", "0.0100",
+     "2,200.00", "--", "--"],
+]
+
+
+def test_duplicate_columns() -> None:
+    print("\n[10] 重複欄位名（權證收盤價與標的收盤價都叫「收盤價」）")
+    cols = T._dedupe_columns(REAL_STATIC_FIELDS)
+    check(len(set(cols)) == len(cols), "重複欄位名被去重")
+    check(cols[2] == "收盤價" and cols[6] == "收盤價/指數" and cols[3] == "漲跌"
+          and cols[7] == "漲跌.1", f"第二個「漲跌」變成 漲跌.1（{cols[3]}, {cols[7]}）")
+
+    js = json.dumps({"stat": "OK", "tables": [{"fields": REAL_STATIC_FIELDS,
+                                               "data": REAL_STATIC_ROWS}]},
+                    ensure_ascii=False)
+    df = T._parse_twse_payload_any(js)
+    check(isinstance(df["收盤價"], pd.Series), "df[\"收盤價\"] 是 Series 而不是 DataFrame")
+
+
+def test_warrant_static() -> None:
+    print("\n[11] 權證基本資料（用真實欄位名）")
+    js = json.dumps({"stat": "OK", "tables": [{"fields": REAL_STATIC_FIELDS,
+                                               "data": REAL_STATIC_ROWS}]},
+                    ensure_ascii=False)
+    out = T.parse_warrant_static(T._parse_twse_payload_any(js))
+    r = out.set_index("warrant_code")
+    check(list(out["warrant_code"]) == ["030079", "070001"], "權證代號")
+    check(r.loc["030079", "strike"] == 2600.0, f"履約價 2,600.00 -> {r.loc['030079','strike']}")
+    check(r.loc["030079", "exercise_ratio"] == 0.01, "行使比例")
+    check(r.loc["030079", "underlying"] == "1303", "標的代號")
+    check(r.loc["030079", "warrant_type"] == "認購" and r.loc["070001", "warrant_type"] == "認售",
+          "權證類型正規化")
+    check(r.loc["030079", "expiry_date"] == "116/03/18", "到期日取履約截止日（不是最後交易日）")
+    check(pd.isna(r.loc["030079", "cap_price"]), "上限價格 '--' -> NaN")
+
+    # 民國到期日換算成剩餘天數
+    df = pd.DataFrame({"warrant_code": ["030079"], "days_to_expiry": [np.nan],
+                       "expiry_date": ["116/03/18"]})
+    got = T._fill_days_to_expiry(df)
+    want = (pd.Timestamp("2027-03-18") - pd.Timestamp.today().normalize()).days
+    check(got.loc[0, "days_to_expiry"] == want, f"116/03/18 -> 剩餘 {want} 天")
+    check("expiry_date" not in got.columns, "換算後收掉 expiry_date")
+
+    try:
+        T.parse_warrant_static(pd.DataFrame({"權證代號": ["030079"], "收盤價": ["1"]}))
+        check(False, "缺履約價時應報錯")
+    except T.TwseError as e:
+        check("履約價" in str(e) and "收盤價" in str(e), "缺履約價時列出實際欄位")
+
+
+def test_grouped_csv_header() -> None:
+    print("\n[12] CSV 的分組表頭（第一列是「權證收盤資訊,,,,標的收盤資訊,,,」）")
+    csv_text = (',,,,,,,,,,,,,,,,,,\n'
+                '"權證收盤資訊","","","","標的收盤資訊","","","","權證基本資訊","","","","","","","","",""\n'
+                + ",".join(f'"{c}"' for c in REAL_STATIC_FIELDS) + "\n"
+                + ",".join(f'"{c}"' for c in REAL_STATIC_ROWS[0]) + "\n")
+    df = T._parse_csv_table(csv_text)
+    check(list(df.columns)[:2] == ["權證代號", "權證簡稱"],
+          f"跳過分組列，抓到真正的表頭（{list(df.columns)[:2]}）")
+    out = T.parse_warrant_static(df)
+    check(out.loc[0, "strike"] == 2600.0, "分組表頭的 CSV 也能解析出履約價")
+
+
+def test_static_in_build(root: Path) -> None:
+    print("\n[13] 證交所基本資料併入 build -> 自動算出 IV/Delta/槓桿")
+    os.chdir(root)
+    real = T.fetch_warrant_static
+    exp = (pd.Timestamp.today().normalize() + pd.Timedelta(days=180)).strftime("%Y-%m-%d")
+    T.fetch_warrant_static = lambda *a, **k: pd.DataFrame({
+        "warrant_code": ["030079", "030081"],
+        "strike": [2600.0, 270.0], "exercise_ratio": [0.01, 0.05],
+        "warrant_type": ["認購", "認購"], "expiry_date": [exp, exp],
+        "underlying": ["2330", "2317"]})
+    try:
+        _, df = T.build_table(days=1, gap=0.0, twse_static=True)   # 沒有 --static
+        d = df.set_index("warrant_code")
+        check(d.loc["030079", "strike"] == 2600.0, "履約價來自證交所，不需要 --static")
+        check(d.loc["030079", "days_to_expiry"] == 180, "到期日換算成剩餘天數")
+        check(pd.notna(d.loc["030079", "iv"]) and pd.notna(d.loc["030079", "delta"])
+              and pd.notna(d.loc["030079", "leverage"]),
+              f"IV/Delta/槓桿自動算出（IV={d.loc['030079','iv']:.1f}%）")
+        check(pd.isna(d.loc["030080", "iv"]), "基本資料裡沒有的權證仍留空")
+
+        T.fetch_warrant_static = lambda *a, **k: (_ for _ in ()).throw(
+            T.ThrottledError("模擬被擋"))
+        _, df2 = T.build_table(days=1, gap=0.0, twse_static=True)
+        check(len(df2) == 4 and df2["strike"].isna().all(),
+              "基本資料抓不到時只留空，不中斷整批")
+    finally:
+        T.fetch_warrant_static = real
 
 
 def test_pipeline(root: Path) -> None:
@@ -319,7 +421,7 @@ def test_pipeline(root: Path) -> None:
     os.chdir(root)
     T.REQUEST_GAP = 0.0
 
-    day, df = T.build_table(days=5, static_path="static.csv", gap=0.0)
+    day, df = T.build_table(twse_static=False, days=5, static_path="static.csv", gap=0.0)
     check(day == days[0], f"交易日 {day}")
     check(len(df) == 4, f"權證筆數 {len(df)}（3 認購 + 1 認售）")
     check(list(df.columns) == T.SCREENER_COLS, "輸出欄位與篩選器一致")
@@ -348,7 +450,7 @@ def test_pipeline(root: Path) -> None:
     check(df["hv20"].isna().all(), "未帶 --hv 時 hv20 全空（對應加分項自動失效）")
 
     # 沒有靜態資料時，strike/IV 應為空而不是亂填
-    _, df2 = T.build_table(days=1, static_path=None, gap=0.0)
+    _, df2 = T.build_table(twse_static=False, days=1, static_path=None, gap=0.0)
     check(df2["strike"].isna().all() and df2["iv"].isna().all(),
           "無靜態資料 -> strike/iv 留空")
     check(df2["bid"].notna().all(), "無靜態資料時行情仍完整")
@@ -356,7 +458,7 @@ def test_pipeline(root: Path) -> None:
 
 def test_screener_handoff(root: Path) -> None:
     print("\n[4] 交給 warrant_screener.py")
-    _, df = T.build_table(days=5, static_path="static.csv", gap=0.0)
+    _, df = T.build_table(twse_static=False, days=5, static_path="static.csv", gap=0.0)
     df.to_csv(root / "warrants.csv", index=False, encoding="utf-8-sig")
     out = subprocess.run(
         [sys.executable, str(HERE / "warrant_screener.py"), str(root / "warrants.csv"),
@@ -386,6 +488,10 @@ def main() -> int:
         test_outstanding_parsing()
         test_outstanding_payload_shapes()
         test_outstanding_in_build(tmp)
+        test_duplicate_columns()
+        test_warrant_static()
+        test_grouped_csv_header()
+        test_static_in_build(tmp)
     finally:
         os.chdir(cwd)
         shutil.rmtree(tmp, ignore_errors=True)
