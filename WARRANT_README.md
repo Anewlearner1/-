@@ -236,5 +236,5 @@ python twse_live.py --types 0999P quotes --head 5
 
 離線測試隨時可重跑：
 ```bash
-python test_twse_live.py     # 36 項檢查，不連網
+python test_twse_live.py     # 41 項檢查，不連網
 ```
