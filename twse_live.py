@@ -56,6 +56,7 @@ except ImportError:  # pragma: no cover
 
 TWSE_BASE = "https://www.twse.com.tw/exchangeReport"
 CACHE_DIR = Path(".cache_twse")
+CACHE_KEEP_DAYS = 30       # 每天跑會累積，單日的權證行情就十幾 MB
 REQUEST_GAP = 4.0          # 秒；證交所擋連發，寧可慢一點
 HEADERS = {
     "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -113,6 +114,24 @@ def _sleep_gap(gap: float) -> None:
     if wait > 0:
         time.sleep(wait)
     _last_request_at = time.time()
+
+
+def prune_cache(keep_days: int = CACHE_KEEP_DAYS) -> tuple[int, int]:
+    """刪掉太舊的快取（都是可重抓的資料）。回傳 (刪除檔數, 釋出位元組)。"""
+    if not CACHE_DIR.exists():
+        return 0, 0
+    cutoff = time.time() - keep_days * 86400
+    n = freed = 0
+    for f in CACHE_DIR.glob("*.json"):
+        try:
+            st = f.stat()
+            if st.st_mtime < cutoff:
+                f.unlink()
+                n += 1
+                freed += st.st_size
+        except OSError:
+            pass
+    return n, freed
 
 
 def _cache_path(name: str) -> Path:
@@ -1214,6 +1233,10 @@ def cmd_quotes(a: argparse.Namespace) -> int:
 
 
 def cmd_build(a: argparse.Namespace) -> int:
+    n, freed = prune_cache(a.cache_days)
+    if n:
+        print(f"[cache] 清掉 {n} 個超過 {a.cache_days} 天的快取檔，釋出 {freed / 1e6:.0f} MB",
+              file=sys.stderr)
     unds = [u.strip() for u in a.underlyings.split(",") if u.strip()] if a.underlyings else None
     day, df = build_table(days=a.days, types=_types(a.types), static_path=a.static,
                           with_hv=a.hv, hv_months=a.hv_months, rate=a.rate, gap=a.gap,
@@ -1335,6 +1358,40 @@ def cmd_columns(a: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_daily(a: argparse.Namespace) -> int:
+    """每天跑這一個指令就好：抓資料 -> 組表 -> 篩選。"""
+    n, freed = prune_cache(a.cache_days)
+    if n:
+        print(f"[cache] 清掉 {n} 個超過 {a.cache_days} 天的快取檔，釋出 {freed / 1e6:.0f} MB",
+              file=sys.stderr)
+
+    day, df = build_table(days=a.days, types=_types(a.types), with_hv=not a.no_hv,
+                          gap=a.gap, outstanding_csv=a.outstanding_csv,
+                          twse_static=True)
+    df.to_csv(a.output, index=False, encoding="utf-8-sig")
+    print(f"\n已輸出 {a.output}（交易日 {day}，{len(df)} 檔）")
+    report_coverage(df, partial=df.attrs.get("partial_cols", []))
+
+    try:
+        import warrant_screener as W
+    except ImportError as e:
+        print(f"\n讀不到 warrant_screener（{e}），只輸出資料不篩選。")
+        return 0
+
+    avail = W.scorable_items(df)
+    usable = sum(avail.values())
+    min_score = a.min_score if a.min_score is not None else max(1, usable - 1)
+    if a.min_score is None:
+        print(f"\n--min-score 未指定，依實際滿分 {usable} 自動採用 {min_score}")
+
+    cand, below, rej = W.screen(df, W.HardFilter(), W.SOFT, min_score)
+    W.print_summary(len(df), cand, below, rej, min_score, avail)
+    out = Path(a.output).with_name("warrant_candidates.csv")
+    cand.to_csv(out, index=False, encoding="utf-8-sig")
+    print(f"候選清單已輸出：{out}")
+    return 0
+
+
 def cmd_check_outstanding(a: argparse.Namespace) -> int:
     """
     驗一份匯出檔能不能用，不必先跑整套 build。
@@ -1421,6 +1478,8 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--static", help="權證靜態資料 CSV（履約價／到期日／行使比例…）")
     b.add_argument("--hv", action="store_true", help="另外計算標的 HV20（慢）")
     b.add_argument("--hv-months", type=int, default=3)
+    b.add_argument("--cache-days", type=int, default=CACHE_KEEP_DAYS,
+                   help=f"清掉超過幾天的快取，預設 {CACHE_KEEP_DAYS}")
     b.add_argument("--hv-all", action="store_true",
                    help="HV 算全市場標的（預設只算通過硬性門檻的，快很多）")
     b.add_argument("--rate", type=float, default=RISK_FREE, help="無風險利率，預設 0.015")
@@ -1439,6 +1498,16 @@ def build_parser() -> argparse.ArgumentParser:
     h.add_argument("--hv-months", type=int, default=3)
     h.add_argument("-o", "--output")
     h.set_defaults(func=cmd_hv)
+
+    dl = sub.add_parser("daily", help="每天跑這個：抓資料 -> 組表 -> 篩選，一次完成")
+    dl.add_argument("-o", "--output", default="warrants.csv")
+    dl.add_argument("--days", type=int, default=5)
+    dl.add_argument("--min-score", type=int, default=None,
+                    help="不給就依當天的實際滿分自動決定")
+    dl.add_argument("--no-hv", action="store_true", help="跳過 HV（快一些）")
+    dl.add_argument("--outstanding-csv")
+    dl.add_argument("--cache-days", type=int, default=CACHE_KEEP_DAYS)
+    dl.set_defaults(func=cmd_daily)
 
     o = sub.add_parser("outstanding", help="只抓流通在外比例")
     o.add_argument("--date", help="交易日 YYYYMMDD，預設最近一個交易日")

@@ -17,6 +17,7 @@ import math
 import os
 import shutil
 import subprocess
+import time
 import sys
 import tempfile
 from pathlib import Path
@@ -555,6 +556,45 @@ def test_read_any_table(root: Path) -> None:
     check(T.cmd_check_outstanding(ns3) == 2, "check-outstanding 對讀不到的檔回傳 2")
 
 
+def test_prune_cache(root: Path) -> None:
+    print("\n[19] 快取清理")
+    os.chdir(root)
+    cache = root / ".cache_twse"
+    old = cache / "OLD_JUNK.json"
+    old.write_text("x" * 1000, encoding="utf-8")
+    os.utime(old, (0, time.time() - 40 * 86400))
+    keep = cache / "FRESH_JUNK.json"
+    keep.write_text("y", encoding="utf-8")
+    n, freed = T.prune_cache(keep_days=30)
+    check(n == 1 and freed >= 1000, f"刪掉 1 個 40 天前的檔、釋出 {freed} bytes")
+    check(not old.exists() and keep.exists(), "只刪舊的，新的留著")
+    keep.unlink()
+    check(T.prune_cache(keep_days=30) == (0, 0), "沒有舊檔時不做事")
+
+
+def test_daily(root: Path) -> None:
+    print("\n[20] daily：一個指令跑完 build + 篩選")
+    os.chdir(root)
+    real = T.fetch_warrant_static
+    _e = pd.Timestamp.today().normalize() + pd.Timedelta(days=180)
+    exp = f"{_e.year - 1911}年{_e.month:02d}月{_e.day:02d}日"
+    T.fetch_warrant_static = lambda *a, **k: pd.DataFrame({
+        "warrant_code": ["030079", "030081"], "strike": [2450.0, 260.0],
+        "exercise_ratio": [0.004, 0.02], "warrant_type": ["認購", "認購"],
+        "expiry_date": [exp, exp], "underlying": ["2330", "2317"]})
+    ns = argparse.Namespace(output=str(root / "daily.csv"), days=1, min_score=None,
+                            no_hv=True, outstanding_csv=None, cache_days=30,
+                            gap=0.0, types="0999,0999P")
+    try:
+        check(T.cmd_daily(ns) == 0, "daily 執行成功")
+        check((root / "daily.csv").exists(), "輸出 warrants.csv")
+        check((root / "warrant_candidates.csv").exists(), "輸出 warrant_candidates.csv")
+        got = pd.read_csv(root / "daily.csv", dtype={"warrant_code": str})
+        check(len(got) == 4 and got["strike"].notna().sum() == 2, "資料內容正確")
+    finally:
+        T.fetch_warrant_static = real
+
+
 def test_pipeline(root: Path) -> None:
     print("\n[3] 端對端管線（離線 fixtures）")
     days = T.recent_trading_days(5)          # 相對「今天」，測試不會隨日期失效
@@ -638,6 +678,8 @@ def main() -> int:
         test_greeks_diagnostics()
         test_coverage_partial(tmp)
         test_read_any_table(tmp)
+        test_prune_cache(tmp)
+        test_daily(tmp)
     finally:
         os.chdir(cwd)
         shutil.rmtree(tmp, ignore_errors=True)

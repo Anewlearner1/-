@@ -113,21 +113,26 @@ python warrant_screener.py warrants.csv --min-score 4
 
 直接向證券交易所抓真實行情，不再需要從券商匯出報價。
 
-## 一分鐘上手
+## 每天就跑這一行
 ```bash
 pip install requests pandas numpy
+python twse_live.py --gap 1 daily
+```
+`daily` 會一次做完：抓行情 → 併權證基本資料 → 算 IV/Delta/槓桿 → 算 HV
+→ 篩選 → 輸出 `warrants.csv` 與 `warrant_candidates.csv`。
+`--min-score` 不指定的話，會依當天實際拿得到的滿分自動決定。
+它也會順手清掉 30 天前的快取（`--cache-days` 可調）——單日的權證行情就十幾 MB。
 
-# 1) 看一眼真實行情（最近一個交易日的認購＋認售權證）
-python twse_live.py quotes --head 20
+實測一輪（2026-09-18）：33,767 檔權證 → 147 檔過硬性門檻 → 十幾檔候選，
+含 HV 全程約 5 分鐘。
 
-# 2) 產生靜態資料範本，填入履約價／到期日／行使比例
-python twse_live.py static-template            # -> warrant_static.csv
-
-# 3) 組出篩選器要的標準 CSV（真實行情 + 靜態資料 + 自算 IV/Delta/槓桿）
-python twse_live.py build -o warrants.csv --days 5 --static warrant_static.csv --hv
-
-# 4) 篩選
-python warrant_screener.py warrants.csv --min-score 3
+想拆開來跑或只看某一段：
+```bash
+python twse_live.py quotes --head 20        # 只看行情
+python twse_live.py static --head 10        # 只看權證基本資料
+python twse_live.py hv 2330 2317            # 只算 HV
+python twse_live.py build -o warrants.csv --days 5 --hv    # 只組表不篩選
+python warrant_screener.py warrants.csv --min-score 4
 ```
 
 ## 哪些欄位是真的從證交所來的
@@ -180,7 +185,11 @@ python twse_live.py static --head 10     # 只看基本資料抓到什麼
 | 發行券商金額排行 | `/rwd/zh/brokerService/warrantRankAmount` | 排行、證券商代號、證券商名稱、發行金額 |
 | 標的證券排行 | `/rwd/zh/brokerService/warrantRankSecurities` | 排行、權證標的代號、名稱、發行檔數 |
 
-排行榜都是**券商層級的彙總**，不是逐檔資料。所以流通在外只能走匯出檔。
+排行榜都是**券商層級的彙總**，不是逐檔資料。
+
+**結論：流通在外拿不到時，就讓它空著。** 它從來不是硬性門檻，只是 6 個加分項
+裡的 1 項，過門檻的名單一檔都不會因此改變；影響只有實際滿分從 5 變成 4，
+而篩選器會自己算出實際滿分並在摘要說明缺了哪幾項，不會讓你誤判分數。
 
 要自己重新確認（證交所日後新增報表時）：
 ```bash
@@ -208,6 +217,20 @@ python twse_live.py build -o warrants.csv --outstanding
 比例優先用表上現成的「流通在外比例」欄；沒有就用「流通在外數量 ÷ 發行數量」
 自己算。同一張表若順便帶了履約價／到期日／行使比例，也會一併撿走，
 那就不必再另外準備 `--static`。
+
+### 匯出檔也大多沒有（實際找過）
+券商權證網與權證資訊揭露平台的匯出檔裡也不一定有這一欄。若你的來源有，
+它通常直接是一個百分比欄（流通在外比例／比重／％），**不需要湊
+「數量 ÷ 發行數量」**——那個除法只是備案，給那種只提供兩個數量的來源用。
+
+務實的做法：篩選器會把三萬多檔收斂到十幾檔，那十幾檔在券商網站上一檔一檔
+看很快。要餵回程式的話，手寫一個兩欄的小 CSV 就成立：
+
+```csv
+權證代號,流通在外比例
+082181,35
+063323,48
+```
 
 ### 用匯出檔
 權證資訊揭露平台、各家券商權證專區都有這份資料。先驗檔案能不能用：
@@ -339,5 +362,5 @@ CSV 版的分組表頭、`--` 空值）。
 
 離線測試隨時可重跑：
 ```bash
-python test_twse_live.py     # 112 項檢查，不連網
+python test_twse_live.py     # 119 項檢查，不連網
 ```
