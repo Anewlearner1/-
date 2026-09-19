@@ -188,10 +188,29 @@ def apply_hard_filters(df: pd.DataFrame, cfg: HardFilter) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 
+# 每個加分項需要哪一欄才算得出來。欄位整欄都是空的 -> 這一項誰也拿不到分，
+# 不該算進滿分裡，否則「2 分」看起來很差，其實已經是當下的滿分。
+SCORE_INPUTS = {
+    "同標的IV最低": "iv",
+    "IV低於HV": "hv20",
+    "Delta 0.4-0.6": "delta",
+    "流通在外低": "outstanding_pct",
+    "事件距離足夠": "days_to_event",
+    "涵蓋事件日": "event_before_expiry",
+}
+
+
+def scorable_items(df: pd.DataFrame) -> dict[str, bool]:
+    """哪些加分項的資料是有的（整欄皆空就是拿不到）。"""
+    return {name: bool(col in df.columns and df[col].notna().any())
+            for name, col in SCORE_INPUTS.items()}
+
+
 def apply_scoring(df: pd.DataFrame, cfg: SoftScore) -> pd.DataFrame:
     df = df.copy()
     df["score"] = 0
     df["score_detail"] = ""
+    df["score_max"] = sum(scorable_items(df).values())
 
     passed = df["passed_hard"]
     if not passed.any():
@@ -245,7 +264,7 @@ def apply_scoring(df: pd.DataFrame, cfg: SoftScore) -> pd.DataFrame:
 DISPLAY_COLS = [
     "warrant_code", "underlying", "issuer", "warrant_type", "days_to_expiry",
     "leverage", "otm_pct", "spread_pct", "iv", "hv20", "delta", "score",
-    "score_detail",
+    "score_max", "score_detail",
 ]
 
 
@@ -268,7 +287,8 @@ def screen(df: pd.DataFrame, hard: HardFilter = HARD, soft: SoftScore = SOFT,
 
 
 def print_summary(total: int, cand: pd.DataFrame, below: pd.DataFrame,
-                  rej: pd.DataFrame, min_score: int) -> None:
+                  rej: pd.DataFrame, min_score: int,
+                  avail: dict[str, bool] | None = None) -> None:
     pd.set_option("display.width", 200)
     pd.set_option("display.max_columns", None)
     pd.set_option("display.unicode.east_asian_width", True)
@@ -276,6 +296,14 @@ def print_summary(total: int, cand: pd.DataFrame, below: pd.DataFrame,
     print("=" * 70)
     print(f"共 {total} 檔｜通過硬性門檻 {len(cand) + len(below)} 檔｜"
           f"剔除 {len(rej)} 檔｜候選（>= {min_score} 分）{len(cand)} 檔")
+    if avail is not None:
+        usable = sum(avail.values())
+        missing = [k for k, v in avail.items() if not v]
+        print(f"實際滿分 {usable}/{len(avail)} 分" +
+              (f"｜缺資料而無法得分：{'、'.join(missing)}" if missing else ""))
+        if missing and min_score > usable:
+            print(f"注意：--min-score {min_score} 已經高於實際滿分 {usable}，"
+                  f"不可能有候選。")
     print("=" * 70)
 
     if len(cand):
@@ -409,8 +437,9 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     df = load_data(args.input)
+    avail = scorable_items(df)
     cand, below, rej = screen(df, hard, SOFT, args.min_score)
-    print_summary(len(df), cand, below, rej, args.min_score)
+    print_summary(len(df), cand, below, rej, args.min_score, avail)
 
     cand.to_csv(args.output, index=False, encoding="utf-8-sig")
     print(f"候選清單已輸出：{args.output}")

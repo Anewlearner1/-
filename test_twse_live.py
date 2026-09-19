@@ -460,6 +460,34 @@ def test_hv_prefilter(root: Path) -> None:
         T.fetch_hv_table, T.fetch_warrant_static = real_hv, real_static
 
 
+def test_score_max(root: Path) -> None:
+    print("\n[15] 實際滿分（缺資料的加分項不算進滿分）")
+    os.chdir(root)
+    import warrant_screener as W
+
+    _, df = T.build_table(twse_static=False, days=1, static_path="static.csv", gap=0.0)
+    avail = W.scorable_items(df)
+    check(avail["同標的IV最低"] is True and avail["Delta 0.4-0.6"] is True,
+          "有履約價 -> IV/Delta 算得出來，這兩項拿得到")
+    check(avail["IV低於HV"] is False, "沒跑 --hv -> 這項拿不到")
+    check(avail["流通在外低"] is True, "static.csv 有流通在外 -> 這項拿得到")
+    check(avail["事件距離足夠"] is False and avail["涵蓋事件日"] is False,
+          "沒有事件資料 -> 這兩項拿不到")
+    check(sum(avail.values()) == 3, f"實際滿分 3 而不是 6（{sum(avail.values())}）")
+
+    df2 = df.copy()
+    df2["outstanding_pct"] = np.nan
+    check(sum(W.scorable_items(df2).values()) == 2,
+          f"再抽掉流通在外 -> 實際滿分 2（{sum(W.scorable_items(df2).values())}）")
+    df2["iv"] = 40.0
+    df2["delta"] = 0.5
+
+    scored = W.apply_scoring(W.apply_hard_filters(W.add_derived(df2), W.HardFilter()),
+                             W.SOFT)
+    check((scored["score_max"] == 2).all(), "score_max 寫進每一列，輸出的 CSV 也看得到")
+    check((scored["score"] <= scored["score_max"]).all(), "得分不會超過實際滿分")
+
+
 def test_pipeline(root: Path) -> None:
     print("\n[3] 端對端管線（離線 fixtures）")
     days = T.recent_trading_days(5)          # 相對「今天」，測試不會隨日期失效
@@ -539,6 +567,7 @@ def main() -> int:
         test_grouped_csv_header()
         test_static_in_build(tmp)
         test_hv_prefilter(tmp)
+        test_score_max(tmp)
     finally:
         os.chdir(cwd)
         shutil.rmtree(tmp, ignore_errors=True)

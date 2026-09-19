@@ -29,7 +29,13 @@ days_to_event, event_before_expiry(1/0)
 | 權證 5 日均量 | >= 100 張 |
 | 標的日均量 | >= 3000 張 |
 
-## 加分項（每項 1 分，滿分 6）
+## 加分項（每項 1 分，名目滿分 6）
+
+**實際滿分取決於你有哪些資料。** 整欄都是空值的加分項誰也拿不到分，
+所以篩選器會算出「實際滿分」並在摘要列出缺哪幾項，
+輸出的 CSV 也有 `score_max` 欄。只接證交所資料時實際滿分是 4
+（缺流通在外與催化事件），`--min-score` 請照這個數字設。
+
 1. 同標的 IV 最低（僅在通過硬性門檻者間比較）
 2. IV 低於 20 日 HV
 3. Delta 落在 0.4 ~ 0.6
@@ -164,16 +170,24 @@ python twse_live.py static --head 10     # 只看基本資料抓到什麼
 流通在外比例 = 流通在外數量 ÷ 發行數量。越低代表籌碼多半還在發行商手上、
 報價比較有餘裕，所以篩選器把它當加分項。
 
-### 證交所那張表沒有這一欄
-實測 `/rwd/zh/stock/warrantStock` 的 18 個欄位裡**沒有**流通在外數量或發行數量，
-所以目前要走匯出檔。想找證交所還有沒有別的報表頁帶這份資料：
+### 證交所官網沒有逐檔的流通在外（已窮舉確認）
+`pages` 掃出權證專區只有 6 個帶 data-api 的報表，`columns` 印出它們的實際欄位：
 
+| 報表 | 端點 | 欄位 |
+|---|---|---|
+| 上市權證每日收盤行情資訊彙總表 | `/rwd/zh/stock/warrantStock` | 履約價、行使比例、到期日…（**無**流通在外） |
+| 發行券商檔數排行 | `/rwd/zh/brokerService/warrantRankSymbol` | 排行、證券商代號、證券商名稱、發行檔數 |
+| 發行券商金額排行 | `/rwd/zh/brokerService/warrantRankAmount` | 排行、證券商代號、證券商名稱、發行金額 |
+| 標的證券排行 | `/rwd/zh/brokerService/warrantRankSecurities` | 排行、權證標的代號、名稱、發行檔數 |
+
+排行榜都是**券商層級的彙總**，不是逐檔資料。所以流通在外只能走匯出檔。
+
+要自己重新確認（證交所日後新增報表時）：
 ```bash
-python twse_live.py pages     # 列出權證專區所有報表頁，並探出各自的 data-api
+python twse_live.py pages       # 列出所有報表頁與各自的 data-api
+python twse_live.py columns     # 印出每個報表的實際欄位，並標出疑似流通在外的欄位
 ```
-
-找到了就把頁面路徑加進 `OUTSTANDING_REPORT_PAGES`，或用
-`--report-page <路徑>` 直接指定。
+找到了就把頁面路徑加進 `OUTSTANDING_REPORT_PAGES`，或用 `--report-page` 直接指定。
 
 ### 不寫死端點：執行期從報表頁挖
 證交所的報表頁都是同一套機制——頁面 HTML 上有 `data-api="/<板塊>/<報表代號>"`，
@@ -317,5 +331,5 @@ CSV 版的分組表頭、`--` 空值）。
 
 離線測試隨時可重跑：
 ```bash
-python test_twse_live.py     # 92 項檢查，不連網
+python test_twse_live.py     # 100 項檢查，不連網
 ```
