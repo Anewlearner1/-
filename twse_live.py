@@ -206,13 +206,27 @@ def _num(v: Any) -> float:
 
 
 def _roc_to_date(s: str) -> pd.Timestamp:
-    """'115/09/18' 或 '1150918' -> Timestamp。"""
+    """
+    民國日期 -> Timestamp。證交所各報表的寫法不一致，這些都要吃得下：
+      '115/09/18'（每日行情）、'1150918'（STOCK_DAY_ALL）、
+      '115年10月16日'（權證基本資料）、'115.10.16'、'115年9月6日'
+    看起來不像民國日期就回 NaT，交給呼叫端改用西元解析。
+    """
     s = str(s).strip()
-    m = re.match(r"^(\d{2,3})[/-]?(\d{2})[/-]?(\d{2})$", s)
+    if not s:
+        return pd.NaT
+    m = re.fullmatch(r"(\d{2,3})\s*[年./\-]\s*(\d{1,2})\s*[月./\-]?\s*(\d{1,2})\s*日?", s)
+    if not m:
+        m = re.fullmatch(r"(\d{2,3})(\d{2})(\d{2})", s)   # 1150918 / 990918
     if not m:
         return pd.NaT
     y, mo, d = (int(x) for x in m.groups())
-    return pd.Timestamp(year=y + 1911, month=mo, day=d)
+    if not (1 <= mo <= 12 and 1 <= d <= 31):
+        return pd.NaT
+    try:
+        return pd.Timestamp(year=y + 1911, month=mo, day=d)
+    except ValueError:      # 例如 115年2月30日
+        return pd.NaT
 
 
 def _rows_to_df(table: dict) -> pd.DataFrame:

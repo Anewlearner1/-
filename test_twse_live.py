@@ -114,6 +114,14 @@ def test_parsers() -> None:
     print("\n[2] 解析器")
     check(str(T._roc_to_date("115/09/18").date()) == "2026-09-18", "民國日期 115/09/18")
     check(str(T._roc_to_date("1150918").date()) == "2026-09-18", "民國日期 1150918")
+    # 權證基本資料表用的是這種寫法，一開始沒認出來，到期日整欄解析失敗
+    check(str(T._roc_to_date("115年10月16日").date()) == "2026-10-16", "民國日期 115年10月16日")
+    check(str(T._roc_to_date("115年9月6日").date()) == "2026-09-06", "民國日期 115年9月6日（單位數）")
+    check(str(T._roc_to_date("115.10.16").date()) == "2026-10-16", "民國日期 115.10.16")
+    check(pd.isna(T._roc_to_date("2026-09-18")), "西元日期不當成民國")
+    check(str(T._parse_any_date("2026-09-18").date()) == "2026-09-18", "西元日期走 to_datetime")
+    check(pd.isna(T._roc_to_date("115年13月01日")) and pd.isna(T._roc_to_date("115年2月30日")),
+          "不存在的日期 -> NaT 而不是例外")
     check(T._num("1,234.5") == 1234.5, "千分位")
     check(math.isnan(T._num("--")) and math.isnan(T._num("")), "破折號／空字串 -> NaN")
     check(math.isnan(T._num("<p style= color:red>+</p>")), "HTML 標記 -> NaN")
@@ -319,10 +327,10 @@ REAL_STATIC_FIELDS = ['權證代號', '權證簡稱', '收盤價', '漲跌', '�
                       '履約價格(元)/點數', '上限價格(元)/點數', '下限價格(元)/點數']
 REAL_STATIC_ROWS = [
     ["030079", "南亞統一59購01", "20.00", "0.00", "1303", "南亞", "238.00", "1.50",
-     "認購", "歐式", "114/09/18", "115/09/18", "116/03/17", "116/03/18", "0.010",
+     "認購", "歐式", "114年09月18日", "115年09月18日", "116年03月17日", "116年03月18日", "0.010",
      "2,600.00", "--", "--"],
     ["070001", "台積電群益5A售12", "0.80", "-0.02", "2330", "台積電", "2,400.00", "5.00",
-     "認售", "歐式", "115/01/05", "115/02/05", "116/02/09", "116/02/10", "0.0100",
+     "認售", "歐式", "115年01月05日", "115年02月05日", "116年02月09日", "116年02月10日", "0.0100",
      "2,200.00", "--", "--"],
 ]
 
@@ -354,15 +362,16 @@ def test_warrant_static() -> None:
     check(r.loc["030079", "underlying"] == "1303", "標的代號")
     check(r.loc["030079", "warrant_type"] == "認購" and r.loc["070001", "warrant_type"] == "認售",
           "權證類型正規化")
-    check(r.loc["030079", "expiry_date"] == "116/03/18", "到期日取履約截止日（不是最後交易日）")
+    check(r.loc["030079", "expiry_date"] == "116年03月18日",
+          "到期日取履約截止日（不是最後交易日）")
     check(pd.isna(r.loc["030079", "cap_price"]), "上限價格 '--' -> NaN")
 
     # 民國到期日換算成剩餘天數
     df = pd.DataFrame({"warrant_code": ["030079"], "days_to_expiry": [np.nan],
-                       "expiry_date": ["116/03/18"]})
+                       "expiry_date": ["116年03月18日"]})
     got = T._fill_days_to_expiry(df)
     want = (pd.Timestamp("2027-03-18") - pd.Timestamp.today().normalize()).days
-    check(got.loc[0, "days_to_expiry"] == want, f"116/03/18 -> 剩餘 {want} 天")
+    check(got.loc[0, "days_to_expiry"] == want, f"116年03月18日 -> 剩餘 {want} 天")
     check("expiry_date" not in got.columns, "換算後收掉 expiry_date")
 
     try:
@@ -389,7 +398,8 @@ def test_static_in_build(root: Path) -> None:
     print("\n[13] 證交所基本資料併入 build -> 自動算出 IV/Delta/槓桿")
     os.chdir(root)
     real = T.fetch_warrant_static
-    exp = (pd.Timestamp.today().normalize() + pd.Timedelta(days=180)).strftime("%Y-%m-%d")
+    _e = pd.Timestamp.today().normalize() + pd.Timedelta(days=180)
+    exp = f"{_e.year - 1911}年{_e.month:02d}月{_e.day:02d}日"   # 證交所的真實寫法
     T.fetch_warrant_static = lambda *a, **k: pd.DataFrame({
         "warrant_code": ["030079", "030081"],
         "strike": [2600.0, 270.0], "exercise_ratio": [0.01, 0.05],
