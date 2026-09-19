@@ -156,6 +156,10 @@ def _fetch_url(url: str, params: dict[str, Any], cache_key: str,
                     f"證交所回 {r.status_code} 導向錯誤頁：{url} {params}")
                 continue
             r.raise_for_status()
+            # 證交所有些頁面沒宣告 charset，requests 會退回 ISO-8859-1，
+            # 中文就變成「å°ˆè¡」這種亂碼。這裡強制照 UTF-8 解。
+            if not r.encoding or r.encoding.lower() in ("iso-8859-1", "latin-1"):
+                r.encoding = r.apparent_encoding or "utf-8"
             text = r.text.lstrip("\ufeff").lstrip()
             if "安全性考量" in text[:800] or "CAN NOT BE ACCESSED" in text[:800]:
                 last = ThrottledError(f"證交所回傳安全性錯誤頁：{url} {params}")
@@ -1202,25 +1206,67 @@ def cmd_static(a: argparse.Namespace) -> int:
 
 def cmd_pages(a: argparse.Namespace) -> int:
     """列出權證專區選單裡的所有報表頁，順便把每一頁的 data-api 探出來。"""
-    url = f"{TWSE_SITE}{WARRANT_MENU_URL}"
     try:
-        html = _fetch_url(url, {}, cache_key="MENU_WARRANTS", gap=a.gap, html_ok=True)
+        pages = _menu_pages(a.gap)
     except (TwseError, ThrottledError) as e:
         print(f"讀不到權證專區選單：{e}")
         return 1
-    links = re.findall(r'href="([^"]+\.html)"[^>]*>\s*([^<]{1,40})', html)
-    seen: set[str] = set()
-    print(f"權證專區報表頁（共 {len(links)} 個連結）：")
-    for href, title in links:
-        path = href.replace("${root}", "").strip()
-        if path in seen or not path.startswith("/"):
-            continue
-        seen.add(path)
-        print(f"\n{title.strip()}\n  {path}")
+    print(f"權證專區報表頁（共 {len(pages)} 個）：")
+    for title, path in pages:
+        print(f"\n{title}\n  {path}")
         try:
             print(f"  -> {discover_report_api(path, gap=a.gap)}")
         except (TwseError, ThrottledError) as e:
             print(f"  -> （無 data-api 或讀不到）{str(e).splitlines()[0]}")
+    return 0
+
+
+def _menu_pages(gap: float) -> list[tuple[str, str]]:
+    """從權證專區選單抓出 (標題, 頁面路徑)。"""
+    html = _fetch_url(f"{TWSE_SITE}{WARRANT_MENU_URL}", {}, cache_key="MENU_WARRANTS",
+                      gap=gap, html_ok=True)
+    out: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for href, title in re.findall(r'href="([^"]+\.html)"[^>]*>\s*([^<]{1,40})', html):
+        path = href.replace("${root}", "").strip()
+        if path.startswith("/") and path not in seen:
+            seen.add(path)
+            out.append((title.strip(), path))
+    return out
+
+
+def cmd_columns(a: argparse.Namespace) -> int:
+    """
+    把報表真正的欄位名列出來——要判斷「這份資料到底在不在證交所」，
+    看欄位名最快，不必先寫好解析再試。
+    """
+    day = a.date or latest_quotes(("0999",), gap=a.gap)[0]
+    if a.pages:
+        pages = [(p, p) for p in a.pages]
+    else:
+        try:
+            pages = _menu_pages(a.gap)
+        except (TwseError, ThrottledError) as e:
+            print(f"讀不到權證專區選單：{e}")
+            return 1
+    for title, page in pages:
+        try:
+            api = discover_report_api(page, gap=a.gap)
+        except (TwseError, ThrottledError):
+            continue                      # 沒有 data-api 的說明頁，跳過
+        print(f"\n{title}\n  {page}\n  -> {api}")
+        try:
+            text = _fetch_url(api, {"date": day, "response": "json"},
+                              cache_key=f"COLS_{page}_{day}", gap=a.gap)
+            df = _parse_twse_payload_any(text)
+        except (TwseError, ThrottledError) as e:
+            print(f"     取不到資料：{str(e).splitlines()[0]}")
+            continue
+        print(f"     {len(df)} 列｜欄位：{list(df.columns)}")
+        hits = [c for c in df.columns
+                if any(k in str(c) for k in ("流通在外", "發行數量", "發行量", "餘額"))]
+        if hits:
+            print(f"     ★ 疑似流通在外相關欄位：{hits}")
     return 0
 
 
@@ -1307,6 +1353,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     pg = sub.add_parser("pages", help="列出證交所權證專區有哪些報表頁（找流通在外用）")
     pg.set_defaults(func=cmd_pages)
+
+    cl = sub.add_parser("columns", help="列出各報表實際的欄位名（判斷某份資料在不在證交所）")
+    cl.add_argument("pages", nargs="*", help="報表頁路徑，不給就掃整個權證專區")
+    cl.add_argument("--date")
+    cl.set_defaults(func=cmd_columns)
 
     da = sub.add_parser("discover-api",
                         help="讀報表頁的 data-api，印出真正的資料端點（不寫死網址）")
