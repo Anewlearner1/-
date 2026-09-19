@@ -1,0 +1,8 @@
+.cache_twse/
+.cache_warrant/
+warrants.csv
+warrant_candidates.csv
+warrant_full_result.csv
+warrant_static.csv
+demo_warrants.csv
+__pycache__/

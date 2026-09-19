@@ -1,0 +1,22 @@
+{
+  "_comment": "右邊填你匯出檔的欄位名稱；不存在的欄位填 null。可用 expiry_date 代替 days_to_expiry。",
+  "warrant_code": "權證代號",
+  "underlying": "標的代號",
+  "issuer": "發行券商",
+  "warrant_type": "權證類別",
+  "strike": "履約價",
+  "underlying_price": "標的股價",
+  "days_to_expiry": "剩餘天數",
+  "expiry_date": null,
+  "leverage": "實質槓桿",
+  "bid": "委買價",
+  "ask": "委賣價",
+  "avg_volume_5d": null,
+  "underlying_volume": null,
+  "iv": "隱含波動率",
+  "delta": "Delta",
+  "hv20": null,
+  "outstanding_pct": "流通在外比例",
+  "days_to_event": null,
+  "event_before_expiry": null
+}
