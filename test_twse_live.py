@@ -64,15 +64,12 @@ def write_fixtures(root: Path, days: list[str]) -> None:
             (cache / f"MI_INDEX_{d}_{t}.json").write_text(
                 json.dumps(obj, ensure_ascii=False), encoding="utf-8")
 
-    sda = {"stat": "OK",
-           "fields": ["日期", "證券代號", "證券名稱", "成交股數", "成交金額", "開盤價",
-                      "最高價", "最低價", "收盤價", "漲跌價差", "成交筆數"],
-           "data": [["1150918", "2330", "台積電", "31,855,287", "1", "2395.00",
-                     "2410.00", "2390.00", "2400.00", "5.00", "100"],
-                    ["1150918", "2317", "鴻海", "12,000,000", "1", "249.0",
-                     "251.0", "248.0", "250.00", "1.00", "100"]]}
+    # STOCK_DAY_ALL 實測就算帶 response=json 也是回 CSV，fixture 照實模擬
     (cache / f"STOCK_DAY_ALL_{days[0]}.json").write_text(
-        json.dumps(sda, ensure_ascii=False), encoding="utf-8")
+        "日期,證券代號,證券名稱,成交股數,成交金額,開盤價,最高價,最低價,收盤價,漲跌價差,成交筆數\n"
+        '"1150918","2330","台積電","31,855,287","1","2395.00","2410.00","2390.00","2400.00","5.00","100"\n'
+        '"1150918","2317","鴻海","12,000,000","1","249.0","251.0","248.0","250.00","1.00","100"\n',
+        encoding="utf-8")
 
     (root / "static.csv").write_text(
         "權證代號,履約價,到期日,行使比例,流通在外比例\n"
@@ -122,6 +119,65 @@ def test_parsers() -> None:
     check(math.isnan(T._num("<p style= color:red>+</p>")), "HTML 標記 -> NaN")
     check(T.guess_issuer("台積電元大89購01") == "元大", "發行商推測")
     check(pd.isna(T.guess_issuer("鴻海ZZ99購01")), "認不出的發行商 -> NaN")
+
+
+def test_payload_parsing() -> None:
+    print("\n[2b] 端點回傳格式（同一支端點有時 JSON 有時 CSV）")
+    csv_text = ('日期,證券代號,證券名稱,收盤價,成交股數\n'
+                '"1150918","2330","台積電","2400.00","31,855,287"\n')
+    df = T._parse_twse_payload(csv_text, must_have="證券代號")
+    check(len(df) == 1 and df.iloc[0]["證券代號"] == "2330", "CSV 版解析")
+
+    json_text = json.dumps({"stat": "OK", "fields": ["證券代號", "收盤價"],
+                            "data": [["2330", "2400.00"]]}, ensure_ascii=False)
+    df = T._parse_twse_payload(json_text, must_have="證券代號")
+    check(len(df) == 1 and df.iloc[0]["收盤價"] == "2400.00", "JSON 版解析")
+
+    try:
+        T._parse_twse_payload('a,b\n1,2\n', must_have="證券代號")
+        check(False, "欄位不符時應報錯")
+    except T.TwseError as e:
+        check("找不到" in str(e), f"欄位不符時明確報錯：{str(e)[:40]}…")
+
+
+def test_warrant_type_map() -> None:
+    print("\n[2c] 權證類別代碼")
+    check(T.WARRANT_TYPES["0999"][0] == "認購" and T.WARRANT_TYPES["0999P"][0] == "認售",
+          "0999 認購 / 0999P 認售")
+    check(T.WARRANT_TYPES["0999C"][0] == "認購" and T.WARRANT_TYPES["0999B"][0] == "認售",
+          "0999C 牛證屬認購 / 0999B 熊證屬認售")
+    check(T.WARRANT_TYPES["0999X"][0] == "認購" and T.WARRANT_TYPES["0999Y"][0] == "認售",
+          "0999X 可展延牛證 / 0999Y 可展延熊證")
+
+
+def test_partial_failure(root: Path) -> None:
+    print("\n[5] 單一類別被擋時不整批陣亡")
+    days = T.recent_trading_days(1)
+    cache = root / ".cache_twse"
+    missing = cache / f"MI_INDEX_{days[0]}_0999P.json"
+    backup = missing.read_text(encoding="utf-8")
+    missing.unlink()
+    calls = T._fetch_text  # 攔截網路：讓沒有快取的請求直接視為被擋
+
+    def fake(path, params, cache_key, gap=0.0, retries=3):
+        cf = T._cache_path(cache_key)
+        if cf.exists():
+            return cf.read_text(encoding="utf-8")
+        raise T.ThrottledError("模擬被 WAF 擋下")
+
+    T._fetch_text = fake
+    try:
+        df = T.fetch_warrant_quotes(days[0], ("0999", "0999P"), gap=0.0)
+        check(len(df) == 3 and set(df["warrant_type"]) == {"認購"},
+              f"認售被擋仍回傳 {len(df)} 檔認購")
+        try:
+            T.fetch_warrant_quotes(days[0], ("0999P",), gap=0.0)
+            check(False, "全部類別都被擋時應丟 ThrottledError")
+        except T.ThrottledError:
+            check(True, "全部類別都被擋時丟 ThrottledError")
+    finally:
+        T._fetch_text = calls
+        missing.write_text(backup, encoding="utf-8")
 
 
 def test_pipeline(root: Path) -> None:
@@ -189,8 +245,11 @@ def main() -> int:
     try:
         test_math()
         test_parsers()
+        test_payload_parsing()
+        test_warrant_type_map()
         test_pipeline(tmp)
         test_screener_handoff(tmp)
+        test_partial_failure(tmp)
     finally:
         os.chdir(cwd)
         shutil.rmtree(tmp, ignore_errors=True)

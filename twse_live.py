@@ -69,8 +69,8 @@ HEADERS = {
 WARRANT_TYPES = {
     "0999":  ("認購", "認購權證(不含牛證)"),
     "0999P": ("認售", "認售權證(不含熊證)"),
-    "0999B": ("認購", "牛證"),
-    "0999C": ("認售", "熊證"),
+    "0999C": ("認購", "牛證(不含可展延牛證)"),
+    "0999B": ("認售", "熊證(不含可展延熊證)"),
     "0999X": ("認購", "可展延型牛證"),
     "0999Y": ("認售", "可展延型熊證"),
 }
@@ -80,8 +80,13 @@ DEFAULT_TYPES = ("0999", "0999P")
 ISSUERS = [
     "凱基", "元大", "元富", "富邦", "國泰", "群益", "永豐", "統一", "中信", "兆豐",
     "日盛", "台新", "華南", "康和", "玉山", "第一", "大昌", "福邦", "宏遠", "亞東",
-    "麥證", "摩根", "港商", "新光", "合庫", "安泰", "陽信", "王道",
+    "麥證", "摩根", "港商", "新光", "合庫", "安泰", "陽信", "王道", "國票",
 ]
+
+# 權證簡稱的結構是「標的簡稱 + 券商簡稱 + 2 碼序號 + 購/售 + 流水號」，
+# 例如「南亞統一59購01」。白名單認不出來時，用這個位置規則兜底，
+# 新的發行券商上市也不會漏掉。
+ISSUER_RE = re.compile(r"([\u4e00-\u9fff]{2})(?=[0-9A-Z]{2}[購售])")
 
 RISK_FREE = 0.015          # 無風險利率預設值，可用 --rate 覆寫
 TRADING_DAYS = 252
@@ -116,12 +121,18 @@ def _cache_path(name: str) -> Path:
     return CACHE_DIR / f"{safe}.json"
 
 
-def _get_json(path: str, params: dict[str, Any], cache_key: str,
-              gap: float = REQUEST_GAP, retries: int = 2) -> dict:
-    """抓一個 JSON 端點；同一個 cache_key 只會真的連線一次。"""
+def _fetch_text(path: str, params: dict[str, Any], cache_key: str,
+                gap: float = REQUEST_GAP, retries: int = 3) -> str:
+    """
+    抓一個端點的原始內容；同一個 cache_key 只會真的連線一次。
+
+    證交所的 WAF 會間歇性地把請求 307 導向錯誤頁——同一個網址上一分鐘成功、
+    下一分鐘被擋是常態。因此 307 視為「可重試」，退避時間逐次加長，
+    重試都用完才丟 ThrottledError。
+    """
     cf = _cache_path(cache_key)
     if cf.exists():
-        return json.loads(cf.read_text(encoding="utf-8"))
+        return cf.read_text(encoding="utf-8")
     if requests is None:
         raise TwseError("需要 requests：pip install requests")
 
@@ -131,26 +142,40 @@ def _get_json(path: str, params: dict[str, Any], cache_key: str,
         _sleep_gap(gap * (attempt + 1))
         try:
             r = requests.get(url, params=params, headers=HEADERS,
-                             timeout=60, allow_redirects=False)
+                             timeout=90, allow_redirects=False)
             if r.status_code in (301, 302, 307, 308):
-                raise ThrottledError(
-                    f"證交所回 {r.status_code} 導向錯誤頁：{url} {params}\n"
-                    f"這通常代表『短時間請求太多被擋』，或該 type 代碼不存在。\n"
-                    f"請等幾分鐘再試，或把 --gap 調大（目前 {gap} 秒）。"
-                )
+                last = ThrottledError(
+                    f"證交所回 {r.status_code} 導向錯誤頁：{url} {params}")
+                continue
             r.raise_for_status()
-            text = r.text.lstrip()
+            text = r.text.lstrip("\ufeff").lstrip()
             if text.startswith("<"):
-                raise ThrottledError(f"證交所回傳 HTML 錯誤頁而非 JSON：{url} {params}")
-            data = r.json()
-        except ThrottledError:
-            raise
+                last = ThrottledError(f"證交所回傳 HTML 錯誤頁而非資料：{url} {params}")
+                continue
+        except ThrottledError as e:
+            last = e
+            continue
         except Exception as e:  # noqa: BLE001
             last = e
             continue
-        cf.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-        return data
+        cf.write_text(text, encoding="utf-8")
+        return text
+
+    if isinstance(last, ThrottledError):
+        raise ThrottledError(
+            f"{last}\n重試 {retries} 次都被擋。這通常是證交所限流（等幾分鐘、"
+            f"把 --gap 調大到 10-20 再跑），也可能是該 type 代碼此端點不支援。"
+        )
     raise TwseError(f"下載失敗：{url} {params}\n原因：{last}")
+
+
+def _get_json(path: str, params: dict[str, Any], cache_key: str,
+              gap: float = REQUEST_GAP, retries: int = 3) -> dict:
+    text = _fetch_text(path, params, cache_key, gap=gap, retries=retries)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        raise TwseError(f"{path} 回傳的不是 JSON（前 120 字：{text[:120]!r}）") from e
 
 
 # ---------------------------------------------------------------------------
@@ -212,11 +237,18 @@ def fetch_warrant_quotes(day: str, types: Iterable[str] = DEFAULT_TYPES,
     該日休市時回傳空 DataFrame。
     """
     frames: list[pd.DataFrame] = []
+    blocked: list[str] = []
     for t in types:
         if t not in WARRANT_TYPES:
             raise TwseError(f"未知的權證類別代碼 {t}，可用：{list(WARRANT_TYPES)}")
-        data = _get_json("MI_INDEX", {"response": "json", "date": day, "type": t},
-                         cache_key=f"MI_INDEX_{day}_{t}", gap=gap)
+        try:
+            data = _get_json("MI_INDEX", {"response": "json", "date": day, "type": t},
+                             cache_key=f"MI_INDEX_{day}_{t}", gap=gap)
+        except ThrottledError as e:
+            # 一種類別被擋不該讓整批陣亡：記下來，最後統一警告
+            blocked.append(t)
+            print(f"[twse] 類別 {t}（{WARRANT_TYPES[t][1]}）取不到：{e}", file=sys.stderr)
+            continue
         if str(data.get("stat", "")).upper() not in ("OK", ""):
             continue  # 休市日：stat 會是「很抱歉，沒有符合條件的資料!」
         for table in data.get("tables", []):
@@ -225,6 +257,13 @@ def fetch_warrant_quotes(day: str, types: Iterable[str] = DEFAULT_TYPES,
             df = _rows_to_df(table)
             df["_type_code"] = t
             frames.append(df)
+    if blocked:
+        got = [t for t in types if t not in blocked]
+        if not got:
+            raise ThrottledError(
+                f"所有權證類別都取不到（{', '.join(blocked)}）。等幾分鐘或把 --gap 調大再試。")
+        print(f"[twse] 警告：{', '.join(blocked)} 這幾類這次沒抓到，"
+              f"結果只含 {', '.join(got)}。少掉的類別在篩選時等同不存在。", file=sys.stderr)
     if not frames:
         return pd.DataFrame()
 
@@ -252,7 +291,8 @@ def guess_issuer(name: str) -> Any:
     for iss in ISSUERS:
         if iss in s:
             return iss
-    return np.nan
+    m = ISSUER_RE.search(s)
+    return m.group(1) if m else np.nan
 
 
 def latest_quotes(types: Iterable[str] = DEFAULT_TYPES, lookback: int = 7,
@@ -295,18 +335,44 @@ def warrant_volume_history(days: int, end_day: str, types: Iterable[str] = DEFAU
 
 
 def fetch_stock_day_all(day_tag: str | None = None, gap: float = REQUEST_GAP) -> pd.DataFrame:
-    """全市場個股當日行情。回傳 underlying, close, volume_lots（張）。"""
+    """
+    全市場個股當日行情。回傳 underlying, name, close, volume_lots（張）。
+
+    注意：這個端點就算帶 response=json 也是回 CSV（實測 2026-09），
+    所以這裡直接當 CSV 解析。
+    """
     tag = day_tag or date.today().strftime("%Y%m%d")
-    data = _get_json("STOCK_DAY_ALL", {"response": "json"},
-                     cache_key=f"STOCK_DAY_ALL_{tag}", gap=gap)
-    rows = data.get("data") or data.get("tables", [{}])[0].get("data", [])
-    fields = data.get("fields") or data.get("tables", [{}])[0].get("fields", [])
-    df = pd.DataFrame(rows, columns=[str(f).strip() for f in fields])
+    text = _fetch_text("STOCK_DAY_ALL", {"response": "json"},
+                       cache_key=f"STOCK_DAY_ALL_{tag}", gap=gap)
+    df = _parse_twse_payload(text, must_have="證券代號")
     return pd.DataFrame({
         "underlying": df["證券代號"].astype(str).str.strip(),
+        "name": df["證券名稱"].astype(str).str.strip() if "證券名稱" in df else "",
         "close": df["收盤價"].map(_num),
         "volume_lots": df["成交股數"].map(_num) / 1000.0,
     })
+
+
+def _parse_twse_payload(text: str, must_have: str) -> pd.DataFrame:
+    """證交所同一個端點有時回 JSON、有時回 CSV；兩種都接。"""
+    stripped = text.lstrip()
+    if stripped.startswith("{") or stripped.startswith("["):
+        data = json.loads(stripped)
+        if isinstance(data, list):
+            return pd.DataFrame(data)
+        candidates = [data] + list(data.get("tables") or [])
+        for c in candidates:
+            fields = [str(f).strip() for f in (c.get("fields") or [])]
+            if must_have in fields and c.get("data"):
+                return pd.DataFrame(c["data"], columns=fields)
+        raise TwseError(f"回傳的 JSON 找不到含「{must_have}」的表格")
+    # CSV：第一列是標題
+    from io import StringIO
+    df = pd.read_csv(StringIO(text), dtype=str)
+    df.columns = [str(c).strip().strip('"') for c in df.columns]
+    if must_have not in df.columns:
+        raise TwseError(f"CSV 欄位裡找不到「{must_have}」；實際欄位：{list(df.columns)}")
+    return df
 
 
 def fetch_stock_daily_closes(stock_no: str, months: int = 3, end: date | None = None,
@@ -607,8 +673,13 @@ def report_coverage(df: pd.DataFrame) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _types(spec: str) -> tuple[str, ...]:
+    out = tuple(t.strip() for t in str(spec).split(",") if t.strip())
+    return out or DEFAULT_TYPES
+
+
 def cmd_quotes(a: argparse.Namespace) -> int:
-    day, df = latest_quotes(tuple(a.types), gap=a.gap)
+    day, df = latest_quotes(_types(a.types), gap=a.gap)
     print(f"交易日 {day}｜{len(df)} 檔")
     cols = ["warrant_code", "warrant_name", "warrant_type", "issuer", "bid", "ask",
             "volume_shares", "underlying", "underlying_price"]
@@ -622,9 +693,10 @@ def cmd_quotes(a: argparse.Namespace) -> int:
 
 
 def cmd_build(a: argparse.Namespace) -> int:
-    day, df = build_table(days=a.days, types=tuple(a.types), static_path=a.static,
+    unds = [u.strip() for u in a.underlyings.split(",") if u.strip()] if a.underlyings else None
+    day, df = build_table(days=a.days, types=_types(a.types), static_path=a.static,
                           with_hv=a.hv, hv_months=a.hv_months, rate=a.rate, gap=a.gap,
-                          underlyings=a.underlyings)
+                          underlyings=unds)
     df.to_csv(a.output, index=False, encoding="utf-8-sig")
     print(f"已輸出 {a.output}（交易日 {day}，{len(df)} 檔）")
     report_coverage(df)
@@ -660,8 +732,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="權證篩選器 — 證交所真實資料層")
     p.add_argument("--gap", type=float, default=REQUEST_GAP,
                    help=f"每個請求間隔秒數（預設 {REQUEST_GAP}；被限流就調大）")
-    p.add_argument("--types", nargs="*", default=list(DEFAULT_TYPES),
-                   help=f"權證類別代碼，預設 {' '.join(DEFAULT_TYPES)}；可用 {list(WARRANT_TYPES)}")
+    p.add_argument("--types", default=",".join(DEFAULT_TYPES),
+                   help=f"權證類別代碼，逗號分隔，預設 {','.join(DEFAULT_TYPES)}；"
+                        f"可用 {','.join(WARRANT_TYPES)}")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     q = sub.add_parser("quotes", help="抓最近一個交易日的權證行情")
@@ -676,7 +749,7 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--hv", action="store_true", help="另外計算標的 HV20（慢）")
     b.add_argument("--hv-months", type=int, default=3)
     b.add_argument("--rate", type=float, default=RISK_FREE, help="無風險利率，預設 0.015")
-    b.add_argument("--underlyings", nargs="*", help="只保留這些標的的權證，例如 2330 2317")
+    b.add_argument("--underlyings", help="只保留這些標的的權證，逗號分隔，例如 2330,2317")
     b.set_defaults(func=cmd_build)
 
     h = sub.add_parser("hv", help="計算指定標的的 HV20")
