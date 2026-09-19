@@ -135,13 +135,60 @@ python warrant_screener.py warrants.csv --min-score 3
 | underlying_volume | STOCK_DAY_ALL 當日成交股數（股→張） | 真實 |
 | hv20 | STOCK_DAY 逐月日收盤價 → 對數報酬年化標準差 | 真實（`--hv`） |
 | issuer | 由權證簡稱推測（「南亞統一59購01」→ 統一） | 推測，實測 31,449 檔全數命中 |
-| **strike / days_to_expiry / exercise_ratio / outstanding_pct** | **證交所未公開，需 `--static` 提供** | 需自備 |
+| outstanding_pct | 權證報表頁（端點執行期探得）或 `--outstanding-csv` | 見下節 |
+| **strike / days_to_expiry / exercise_ratio** | `--static`，或由上面那張報表順手撿到 | 需自備 |
 | iv / delta / leverage | **由上列資料自行以 Black-Scholes 反解** | 計算值 |
 
 重點：只要你提供「履約價 + 到期日 + 行使比例」這三個幾乎不會變動的靜態欄位，
 IV、Delta、實質槓桿就會由**真實市價**算出來，不必再相信券商匯出的二手數字。
 沒有靜態資料時，這四欄（含 strike）會是空值，對應的硬性門檻與加分項自動失效，
 `build` 結束時會列出每個欄位的空值比例提醒你。
+
+## 流通在外比例
+
+流通在外比例 = 流通在外數量 ÷ 發行數量。越低代表籌碼多半還在發行商手上、
+報價比較有餘裕，所以篩選器把它當加分項。
+
+### 不寫死端點：執行期從報表頁挖
+證交所的報表頁都是同一套機制——頁面 HTML 上有 `data-api="/<板塊>/<報表代號>"`，
+前端再去打 `https://www.twse.com.tw/rwd/zh<data-api>?date=…&response=json`。
+所以這裡是**讀頁面把 data-api 挖出來**，而不是把網址寫死：
+
+```bash
+python twse_live.py discover-api          # 印出權證報表頁探到的端點
+python twse_live.py outstanding           # 只抓流通在外比例
+python twse_live.py build -o warrants.csv --outstanding
+```
+
+證交所改報表代號時，不會靜默出錯，而是明確告訴你在頁面上挖到了什麼。
+表格欄位名也是照名稱找（`OUTSTANDING_FIELDS` 有候選清單，含
+`流通在外數量(仟單位)` 這種帶單位的寫法）；真的對不上時，錯誤訊息會把
+**實際欄位名整排印出來**，你只要往候選清單加一個名字。
+
+比例優先用表上現成的「流通在外比例」欄；沒有就用「流通在外數量 ÷ 發行數量」
+自己算。同一張表若順便帶了履約價／到期日／行使比例，也會一併撿走，
+那就不必再另外準備 `--static`。
+
+### 抓不到？用匯出檔
+權證資訊揭露平台、各家券商權證專區都有這份資料。匯出成 CSV 後：
+
+```bash
+python twse_live.py build -o warrants.csv --outstanding-csv outs.csv
+```
+
+只要有「權證代號」，加上「流通在外比例」或「流通在外數量 + 發行數量」
+其中一組就行，欄位名中英文皆可：
+
+```csv
+權證代號,流通在外數量,發行數量
+030079,3500,10000
+```
+
+### 失敗時的行為
+- **線上抓失敗** → `outstanding_pct` 留空、印出原因，其餘欄位照常輸出；
+  「流通在外低」這個加分項自動失效
+- **`--outstanding-csv` 指定的檔案讀不到** → 直接報錯（那是打錯路徑，不該默默跳過）
+- 合併一律**只補空值**，不覆蓋你 `--static` 裡已經有的數字
 
 ## 實測可用的端點
 ```
@@ -211,6 +258,23 @@ python twse_live.py hv 2330 2317 -o hv.csv     # 只算 HV
 - `STOCK_DAY` → `hv 2330 2317` 得到 HV20 = 18.84% / 22.67%
 - 間歇性 307 行為，以及本模組的重試、容錯與錯誤訊息
 
+**流通在外比例：機制已驗證，來源頁未能實測。** 探索機制對真實頁面跑通了——
+`discover-api /zh/trading/historical/mi-index.html` 正確探到
+`https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX`，接著打那個端點取回
+31,449 筆真實資料，整條「探端點 → 呼叫 → 解析」在真實環境成立。
+但權證報表頁 `/zh/products/securities/warrant/infomation/stock.html` 從本開發環境
+一律被 307 擋掉（`mops.twse.com.tw` 與 `warrants.sfi.org.tw` 則被本環境的
+網路政策整個擋住）。請在你的網路上先跑：
+
+```bash
+python twse_live.py discover-api
+python twse_live.py outstanding --head 10
+```
+
+- 探到端點且有資料 → 直接用 `build --outstanding`
+- 欄位名對不上 → 錯誤訊息會列出實際欄位，加進 `OUTSTANDING_FIELDS` 即可
+- 頁面本身連不到 → 用 `--outstanding-csv` 走匯出檔
+
 **未能實測：`type=0999P`（認售）。** 這個代碼取自證交所 mi-index 頁面自己的
 下拉選單（`0999P 認售權證(不含熊證)`），但從本開發環境連過去一律被 307 擋掉，
 即使前後相鄰的 `0999`、`ALLBUT0999` 都成功。無法區分是「該網路被針對性擋」
@@ -236,5 +300,5 @@ python twse_live.py --types 0999P quotes --head 5
 
 離線測試隨時可重跑：
 ```bash
-python test_twse_live.py     # 41 項檢查，不連網
+python test_twse_live.py     # 61 項檢查，不連網
 ```

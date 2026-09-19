@@ -180,6 +180,138 @@ def test_partial_failure(root: Path) -> None:
         missing.write_text(backup, encoding="utf-8")
 
 
+PAGE_HTML = ('<!DOCTYPE html><html><head><meta name="layout" content="web"/></head><body>'
+             '<div class="rwd-tables" data-api="/warrant/WARRANT_DAILY" '
+             'data-date="b:2004,e:0,f:D" data-paging="10,25,50,100"></div></body></html>')
+
+
+def test_discover_api(root: Path) -> None:
+    print("\n[6] 端點探索（讀報表頁的 data-api，不寫死網址）")
+    os.chdir(root)
+    cache = root / ".cache_twse"
+    cache.mkdir(exist_ok=True)
+    page = T.WARRANT_REPORT_PAGES[0]
+    T._cache_path(f"PAGE_{page}").write_text(PAGE_HTML, encoding="utf-8")
+    api = T.discover_report_api(page, gap=0.0)
+    check(api == f"{T.RWD_BASE}/warrant/WARRANT_DAILY", f"探到端點 {api}")
+
+    T._cache_path("PAGE_/bad.html").write_text(
+        '<html><body><div data-paging="10"></div></body></html>', encoding="utf-8")
+    try:
+        T.discover_report_api("/bad.html", gap=0.0)
+        check(False, "沒有 data-api 時應報錯")
+    except T.TwseError as e:
+        check("data-paging" in str(e), "沒有 data-api 時列出頁面實際的 data-* 屬性")
+
+
+def test_outstanding_parsing() -> None:
+    print("\n[7] 流通在外比例")
+    # (a) 表上只有數量 -> 自己算比例
+    df = pd.DataFrame({"權證代號": ["030079", "030080"],
+                       "流通在外數量": ["3,500", "0"],
+                       "發行數量": ["10,000", "10,000"],
+                       "履約價": ["2,600", "3000"],
+                       "到期日": ["2027-03-18", "115/11/20"],
+                       "行使比例": ["0.01", "0.01"]})
+    out = T.parse_outstanding_table(df)
+    check(abs(out.loc[0, "outstanding_pct"] - 35.0) < 1e-9,
+          f"3,500/10,000 -> {out.loc[0, 'outstanding_pct']}%")
+    check(out.loc[1, "outstanding_pct"] == 0.0, "流通在外 0 -> 0%（不是 NaN）")
+    check(out.loc[0, "strike"] == 2600.0 and out.loc[0, "exercise_ratio"] == 0.01,
+          "順手撿到履約價與行使比例")
+    check("到期日" not in out.columns and "expiry_date" in out.columns, "到期日一併帶出")
+
+    # (b) 表上已經有現成比例 -> 直接用，不再自己算
+    df2 = pd.DataFrame({"證券代號": ["030079"], "流通在外比例": ["35.5%"],
+                        "流通在外數量": ["1"], "發行數量": ["10"]})
+    out2 = T.parse_outstanding_table(df2)
+    check(out2.loc[0, "outstanding_pct"] == 35.5, "現成比例優先於自行計算")
+
+    # (c) 欄位帶單位
+    df3 = pd.DataFrame({"權證代號": ["030079"], "流通在外數量(仟單位)": ["3,500"],
+                        "發行數量(仟單位)": ["10,000"]})
+    check(abs(T.parse_outstanding_table(df3).loc[0, "outstanding_pct"] - 35.0) < 1e-9,
+          "欄位名帶單位也認得")
+
+    # (d) 發行數量為 0 -> NaN 而不是除以零
+    df4 = pd.DataFrame({"權證代號": ["030079"], "流通在外數量": ["5"], "發行數量": ["0"]})
+    check(pd.isna(T.parse_outstanding_table(df4).loc[0, "outstanding_pct"]),
+          "發行數量為 0 -> NaN")
+
+    # (e) 湊不出比例 -> 明確報錯並列出實際欄位
+    try:
+        T.parse_outstanding_table(pd.DataFrame({"權證代號": ["030079"], "收盤價": ["1.2"]}))
+        check(False, "湊不出比例時應報錯")
+    except T.TwseError as e:
+        check("收盤價" in str(e), "湊不出比例時列出實際欄位")
+
+    try:
+        T.parse_outstanding_table(pd.DataFrame({"foo": ["1"]}))
+        check(False, "沒有代號欄位時應報錯")
+    except T.TwseError as e:
+        check("權證代號" in str(e), "沒有代號欄位時說明試過哪些名稱")
+
+
+def test_outstanding_payload_shapes() -> None:
+    print("\n[8] 報表回傳格式（JSON / 前面有說明行的 CSV）")
+    js = json.dumps({"stat": "OK", "tables": [
+        {"fields": ["說明"], "data": [["x"]]},
+        {"fields": ["權證代號", "流通在外數量", "發行數量"],
+         "data": [["030079", "3,500", "10,000"], ["030080", "9,000", "10,000"]]}]},
+        ensure_ascii=False)
+    out = T.parse_outstanding_table(T._parse_twse_payload_any(js))
+    check(len(out) == 2 and abs(out.loc[1, "outstanding_pct"] - 90.0) < 1e-9,
+          "JSON 多張表時取資料最多的那張")
+
+    csv_text = ('"115年09月18日 上市權證每日收盤行情資訊彙總表"\n'
+                '"權證代號","流通在外數量","發行數量"\n'
+                '"030079","3,500","10,000"\n')
+    out = T.parse_outstanding_table(T._parse_twse_payload_any(csv_text))
+    check(len(out) == 1 and abs(out.loc[0, "outstanding_pct"] - 35.0) < 1e-9,
+          "CSV 前面有標題行也能正確定位表頭")
+
+
+def test_outstanding_in_build(root: Path) -> None:
+    print("\n[9] 流通在外併入 build（只補空值、失敗不中斷）")
+    os.chdir(root)
+    (root / "outs.csv").write_text(
+        "權證代號,流通在外數量,發行數量\n030079,3500,10000\n030081,9000,10000\n",
+        encoding="utf-8-sig")
+    _, df = T.build_table(days=1, static_path="static.csv", gap=0.0,
+                          outstanding_csv=str(root / "outs.csv"))
+    d = df.set_index("warrant_code")
+    check(d.loc["030079", "outstanding_pct"] == 35.0,
+          "static.csv 已有 35 且檔案也是 35 -> 35")
+    check(d.loc["030080", "outstanding_pct"] == 80.0,
+          "檔案沒這檔 -> 保留 static.csv 的 80（不被蓋成空）")
+    check(d.loc["030081", "outstanding_pct"] == 22.0,
+          "static.csv 已有 22，檔案的 90 不覆蓋既有值")
+
+    _, df2 = T.build_table(days=1, static_path=None, gap=0.0,
+                           outstanding_csv=str(root / "outs.csv"))
+    d2 = df2.set_index("warrant_code")
+    check(d2.loc["030081", "outstanding_pct"] == 90.0,
+          "沒有 static 時 -> 用檔案算出的 90")
+    check(pd.isna(d2.loc["070001", "outstanding_pct"]), "檔案裡沒有的權證留空")
+
+    # 使用者打錯檔名要立刻知道，不能默默當成「沒有這份資料」
+    try:
+        T.build_table(days=1, gap=0.0, outstanding_csv=str(root / "missing.csv"))
+        check(False, "指定的檔案不存在時應報錯")
+    except T.TwseError as e:
+        check("讀不到流通在外資料檔" in str(e), "指定的檔案不存在時明確報錯")
+
+    # 但「向證交所抓」失敗只留空，不中斷整批
+    real = T.fetch_outstanding
+    T.fetch_outstanding = lambda *a, **k: (_ for _ in ()).throw(T.ThrottledError("模擬被擋"))
+    try:
+        _, df4 = T.build_table(days=1, gap=0.0, with_outstanding=True)
+        check(len(df4) == 4 and df4["outstanding_pct"].isna().all(),
+              "線上抓流通在外失敗時只留空，不中斷整批")
+    finally:
+        T.fetch_outstanding = real
+
+
 def test_pipeline(root: Path) -> None:
     print("\n[3] 端對端管線（離線 fixtures）")
     days = T.recent_trading_days(5)          # 相對「今天」，測試不會隨日期失效
@@ -250,6 +382,10 @@ def main() -> int:
         test_pipeline(tmp)
         test_screener_handoff(tmp)
         test_partial_failure(tmp)
+        test_discover_api(tmp)
+        test_outstanding_parsing()
+        test_outstanding_payload_shapes()
+        test_outstanding_in_build(tmp)
     finally:
         os.chdir(cwd)
         shutil.rmtree(tmp, ignore_errors=True)

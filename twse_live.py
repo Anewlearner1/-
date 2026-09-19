@@ -123,12 +123,21 @@ def _cache_path(name: str) -> Path:
 
 def _fetch_text(path: str, params: dict[str, Any], cache_key: str,
                 gap: float = REQUEST_GAP, retries: int = 3) -> str:
+    """抓 /exchangeReport 底下的端點。"""
+    return _fetch_url(f"{TWSE_BASE}/{path}", params, cache_key, gap=gap, retries=retries)
+
+
+def _fetch_url(url: str, params: dict[str, Any], cache_key: str,
+               gap: float = REQUEST_GAP, retries: int = 3,
+               html_ok: bool = False) -> str:
     """
-    抓一個端點的原始內容；同一個 cache_key 只會真的連線一次。
+    抓任意網址的原始內容；同一個 cache_key 只會真的連線一次。
 
     證交所的 WAF 會間歇性地把請求 307 導向錯誤頁——同一個網址上一分鐘成功、
     下一分鐘被擋是常態。因此 307 視為「可重試」，退避時間逐次加長，
     重試都用完才丟 ThrottledError。
+
+    html_ok=True 用在抓報表「頁面」（要的就是 HTML）；此時只擋證交所的錯誤頁。
     """
     cf = _cache_path(cache_key)
     if cf.exists():
@@ -136,7 +145,6 @@ def _fetch_text(path: str, params: dict[str, Any], cache_key: str,
     if requests is None:
         raise TwseError("需要 requests：pip install requests")
 
-    url = f"{TWSE_BASE}/{path}"
     last: Exception | None = None
     for attempt in range(retries + 1):
         _sleep_gap(gap * (attempt + 1))
@@ -149,8 +157,11 @@ def _fetch_text(path: str, params: dict[str, Any], cache_key: str,
                 continue
             r.raise_for_status()
             text = r.text.lstrip("\ufeff").lstrip()
-            if text.startswith("<"):
-                last = ThrottledError(f"證交所回傳 HTML 錯誤頁而非資料：{url} {params}")
+            if "安全性考量" in text[:800] or "CAN NOT BE ACCESSED" in text[:800]:
+                last = ThrottledError(f"證交所回傳安全性錯誤頁：{url} {params}")
+                continue
+            if not html_ok and text.startswith("<"):
+                last = ThrottledError(f"證交所回傳 HTML 而非資料：{url} {params}")
                 continue
         except ThrottledError as e:
             last = e
@@ -164,7 +175,7 @@ def _fetch_text(path: str, params: dict[str, Any], cache_key: str,
     if isinstance(last, ThrottledError):
         raise ThrottledError(
             f"{last}\n重試 {retries} 次都被擋。這通常是證交所限流（等幾分鐘、"
-            f"把 --gap 調大到 10-20 再跑），也可能是該 type 代碼此端點不支援。"
+            f"把 --gap 調大到 10-20 再跑），也可能是這個網址／參數此端點不支援。"
         )
     raise TwseError(f"下載失敗：{url} {params}\n原因：{last}")
 
@@ -185,7 +196,7 @@ def _get_json(path: str, params: dict[str, Any], cache_key: str,
 
 def _num(v: Any) -> float:
     """'1,234.5' / '--' / '' -> float 或 NaN。"""
-    s = re.sub(r"<[^>]+>", "", str(v)).replace(",", "").strip()
+    s = re.sub(r"<[^>]+>", "", str(v)).replace(",", "").replace("%", "").strip()
     if s in ("", "-", "--", "---", "nan", "None", "X"):
         return float("nan")
     try:
@@ -424,6 +435,205 @@ def fetch_hv_table(underlyings: Iterable[str], window: int = 20, months: int = 3
 
 
 # ---------------------------------------------------------------------------
+# 2b. 流通在外比例
+# ---------------------------------------------------------------------------
+#
+# 流通在外比例 = 流通在外數量 ÷ 發行數量。
+# 「流通在外」指的是已經賣到市場上、不在發行券商自己手上的部分；
+# 比例越低代表發行商手上的籌碼越多、報價越有餘裕，所以篩選器把它當加分項。
+#
+# 這份資料證交所是放在「上市權證每日收盤行情資訊彙總表」報表頁，
+# 不在 /exchangeReport 那組舊端點裡。證交所的報表頁都用同一套機制：
+# 頁面 HTML 上有 data-api="/<板塊>/<報表代號>"，前端再去打
+# https://www.twse.com.tw/rwd/zh<data-api>?date=...&response=json
+# 所以這裡「不寫死端點」，而是執行期讀頁面把 data-api 挖出來——
+# 證交所改報表代號時不會靜默出錯，而是明確告訴你挖到了什麼。
+
+TWSE_SITE = "https://www.twse.com.tw"
+RWD_BASE = f"{TWSE_SITE}/rwd/zh"
+
+# 已知會提供權證流通在外數量的報表頁（依序嘗試）
+WARRANT_REPORT_PAGES = [
+    "/zh/products/securities/warrant/infomation/stock.html",   # 上市權證每日收盤行情資訊彙總表
+    "/zh/products/securities/warrant/infomation/profile.html", # 各檔權證即時行情及基本資料
+]
+
+DATA_API_RE = re.compile(r'data-api="([^"]+)"')
+
+# 報表欄位名稱的候選清單：證交所改欄位名時，加一個候選就好
+OUTSTANDING_FIELDS: dict[str, list[str]] = {
+    "warrant_code": ["權證代號", "證券代號", "權證代碼", "認購(售)權證代號"],
+    "outstanding_qty": ["流通在外數量", "流通在外張數", "流通在外權證數量",
+                        "流通在外單位數", "流通在外餘額"],
+    "issued_qty": ["發行數量", "發行總數量", "上市總數量", "最初發行數量",
+                   "發行單位數", "已發行數量"],
+    "outstanding_pct": ["流通在外比例", "流通在外比率", "流通在外百分比"],
+    # 順便撿：這些欄位若在同一張表裡，就不必再另外準備 --static
+    "strike": ["履約價", "履約價格"],
+    "expiry_date": ["到期日", "到期日期", "最後交易日"],
+    "exercise_ratio": ["行使比例", "行使比率"],
+}
+
+
+def discover_report_api(page_path: str, gap: float = REQUEST_GAP) -> str:
+    """
+    讀證交所報表頁的 HTML，挖出 data-api，回傳完整的資料端點網址。
+    挖不到就明確報錯（附上頁面裡找到的所有 data-* 屬性）。
+    """
+    url = f"{TWSE_SITE}{page_path}"
+    html = _fetch_url(url, {}, cache_key=f"PAGE_{page_path}", gap=gap, html_ok=True)
+    m = DATA_API_RE.search(html)
+    if not m:
+        others = sorted(set(re.findall(r'(data-[a-z-]+)="', html)))
+        raise TwseError(
+            f"在 {url} 找不到 data-api 屬性。頁面上有的 data-* 屬性：{others or '無'}。\n"
+            f"證交所可能改了頁面結構，請確認報表頁網址是否正確。"
+        )
+    return f"{RWD_BASE}{m.group(1)}"
+
+
+def _pick_field(columns: Iterable[str], names: Iterable[str]) -> str | None:
+    cols = list(columns)
+    for n in names:
+        if n in cols:
+            return n
+    # 退一步做包含比對：「流通在外數量(仟單位)」這種帶單位的欄位名
+    for n in names:
+        for c in cols:
+            if n in str(c):
+                return c
+    return None
+
+
+def parse_outstanding_table(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    從任意一張權證報表中，抽出 warrant_code + outstanding_pct（以及順手撿到的靜態欄位）。
+    比例優先用表上現成的；沒有就用 流通在外數量 ÷ 發行數量 自己算。
+    """
+    df = df.copy()
+    df.columns = [str(c).strip() for c in df.columns]
+    picked = {k: _pick_field(df.columns, v) for k, v in OUTSTANDING_FIELDS.items()}
+
+    code_col = picked["warrant_code"]
+    if not code_col:
+        raise TwseError(
+            f"這張表找不到權證代號欄位（試過 {OUTSTANDING_FIELDS['warrant_code']}）。\n"
+            f"實際欄位：{list(df.columns)}"
+        )
+
+    out = pd.DataFrame({"warrant_code": df[code_col].astype(str).str.strip()})
+
+    pct_col, oq_col, iq_col = picked["outstanding_pct"], picked["outstanding_qty"], picked["issued_qty"]
+    if pct_col:
+        out["outstanding_pct"] = df[pct_col].map(_num)
+    elif oq_col and iq_col:
+        oq, iq = df[oq_col].map(_num), df[iq_col].map(_num)
+        out["outstanding_pct"] = np.where(iq > 0, oq / iq * 100.0, np.nan)
+        out["outstanding_qty"] = oq
+        out["issued_qty"] = iq
+    else:
+        raise TwseError(
+            "這張表既沒有現成的流通在外比例，也湊不出「流通在外數量 + 發行數量」。\n"
+            f"找到的欄位對應：{ {k: v for k, v in picked.items() if v} }\n"
+            f"實際欄位：{list(df.columns)}\n"
+            f"若欄位名不同，請把它加進 OUTSTANDING_FIELDS 的候選清單。"
+        )
+
+    for extra in ("strike", "exercise_ratio"):
+        if picked[extra]:
+            out[extra] = df[picked[extra]].map(_num)
+    if picked["expiry_date"]:
+        out["expiry_date"] = df[picked["expiry_date"]]
+
+    out = out[out["warrant_code"].str.len() > 0]
+    return out.drop_duplicates(subset=["warrant_code"]).reset_index(drop=True)
+
+
+def fetch_outstanding(day: str, page_path: str | None = None,
+                      gap: float = REQUEST_GAP) -> pd.DataFrame:
+    """
+    向證交所抓某一交易日的權證流通在外資料。
+    端點在執行期由報表頁的 data-api 決定，不寫死。
+    """
+    pages = [page_path] if page_path else WARRANT_REPORT_PAGES
+    errors: list[str] = []
+    for page in pages:
+        try:
+            api = discover_report_api(page, gap=gap)
+        except (TwseError, ThrottledError) as e:
+            errors.append(f"{page}：{e}")
+            continue
+        print(f"[twse] 流通在外資料端點（由 {page} 的 data-api 探得）：{api}", file=sys.stderr)
+        for resp in ("json", "csv"):
+            try:
+                text = _fetch_url(api, {"date": day, "response": resp},
+                                  cache_key=f"OUTSTANDING_{day}_{resp}", gap=gap)
+                df = _parse_twse_payload_any(text)
+                return parse_outstanding_table(df)
+            except (TwseError, ThrottledError) as e:
+                errors.append(f"{api}?response={resp}：{e}")
+    raise TwseError(
+        "抓不到流通在外資料。嘗試過：\n  " + "\n  ".join(errors) +
+        "\n\n若你的網路連得到證交所但這裡失敗，先跑 "
+        "`python twse_live.py discover-api` 看端點探到什麼；\n"
+        "或改用 --outstanding-csv 匯入券商／權證資訊揭露平台的檔案。"
+    )
+
+
+def _parse_twse_payload_any(text: str) -> pd.DataFrame:
+    """和 _parse_twse_payload 同樣接 JSON／CSV，但不預設要有哪個欄位（取最大的那張表）。"""
+    stripped = text.lstrip()
+    if stripped.startswith("{") or stripped.startswith("["):
+        data = json.loads(stripped)
+        if isinstance(data, list):
+            return pd.DataFrame(data)
+        best: pd.DataFrame | None = None
+        for c in [data] + list(data.get("tables") or []):
+            fields = [str(f).strip() for f in (c.get("fields") or [])]
+            rows = c.get("data") or []
+            if fields and rows and (best is None or len(rows) > len(best)):
+                best = pd.DataFrame(rows, columns=fields)
+        if best is None:
+            raise TwseError(f"JSON 裡沒有任何有資料的表格（stat={data.get('stat')!r}）")
+        return best
+    # 證交所的 CSV 前面常有一兩行標題／說明。用 csv 模組正確處理引號
+    # （欄位值裡的千分位逗號會讓「數逗號」那種猜法失準），
+    # 再取第一個欄位數 >= 2 的列當表頭。
+    import csv as _csv
+    from io import StringIO
+    rows = [r for r in _csv.reader(StringIO(text)) if any(c.strip() for c in r)]
+    if not rows:
+        raise TwseError("CSV 是空的")
+    head_i = next((i for i, r in enumerate(rows) if len(r) >= 2), None)
+    if head_i is None:
+        raise TwseError(f"CSV 找不到表頭（第一列：{rows[0][:3]}）")
+    header = [c.strip().strip('"') for c in rows[head_i]]
+    body = [r for r in rows[head_i + 1:] if len(r) == len(header)]
+    return pd.DataFrame(body, columns=header, dtype=str)
+
+
+def load_outstanding_csv(path: str | Path) -> pd.DataFrame:
+    """
+    從你自己匯出的檔案讀流通在外資料（券商權證專區、權證資訊揭露平台…）。
+    只要有「權證代號」，加上「流通在外比例」或「流通在外數量 + 發行數量」其中一組就行，
+    欄位名稱中英文皆可。
+    """
+    try:
+        raw = pd.read_csv(path, encoding="utf-8-sig", dtype=str)
+    except OSError as e:
+        raise TwseError(f"讀不到流通在外資料檔：{path}（{e}）") from e
+    raw.columns = [str(c).strip() for c in raw.columns]
+    # 英文欄位名也認
+    alias = {"warrant_code": ["warrant_code", "code"],
+             "outstanding_pct": ["outstanding_pct"],
+             "outstanding_qty": ["outstanding_qty"],
+             "issued_qty": ["issued_qty"]}
+    renamed = raw.rename(columns={c: k for k, names in alias.items()
+                                  for c in raw.columns if str(c).lower() in names})
+    return parse_outstanding_table(renamed)
+
+
+# ---------------------------------------------------------------------------
 # 3. Black-Scholes：由真實市價反解 IV、Delta、實質槓桿
 # ---------------------------------------------------------------------------
 
@@ -599,7 +809,10 @@ def build_table(days: int = 5, types: Iterable[str] = DEFAULT_TYPES,
                 static_path: str | None = None, with_hv: bool = False,
                 hv_months: int = 3, rate: float = RISK_FREE,
                 gap: float = REQUEST_GAP,
-                underlyings: Iterable[str] | None = None) -> tuple[str, pd.DataFrame]:
+                underlyings: Iterable[str] | None = None,
+                with_outstanding: bool = False,
+                outstanding_csv: str | None = None,
+                report_page: str | None = None) -> tuple[str, pd.DataFrame]:
     """把真實行情 + 靜態資料組成 warrant_screener.py 吃得下的標準表。"""
     day, quotes = latest_quotes(types, gap=gap)
     print(f"[twse] 交易日 {day}，抓到 {len(quotes)} 檔權證行情", file=sys.stderr)
@@ -645,6 +858,34 @@ def build_table(days: int = 5, types: Iterable[str] = DEFAULT_TYPES,
         print(f"[twse] 已併入靜態資料：{static_path}"
               f"（{int(df['strike'].notna().sum())} 檔有履約價）", file=sys.stderr)
 
+    if with_outstanding or outstanding_csv:
+        od: pd.DataFrame | None = None
+        if outstanding_csv:
+            # 使用者自己指定的檔案讀不到就直接報錯——那是打錯路徑，不該默默跳過
+            od = load_outstanding_csv(outstanding_csv)
+            print(f"[twse] 已讀入流通在外資料：{outstanding_csv}（{len(od)} 檔）",
+                  file=sys.stderr)
+        else:
+            # 連線失敗則留空：對應的加分項自動失效，不要讓整批陣亡
+            try:
+                od = fetch_outstanding(day, page_path=report_page, gap=gap)
+                print(f"[twse] 已抓到流通在外資料（{len(od)} 檔）", file=sys.stderr)
+            except (TwseError, ThrottledError) as e:
+                print(f"[twse] 流通在外資料取得失敗（outstanding_pct 留空）：{e}",
+                      file=sys.stderr)
+        if od is not None:
+            df = _merge_fill(df, od, on="warrant_code",
+                              cols=("outstanding_pct", "strike", "exercise_ratio",
+                                    "expiry_date"))
+            if "expiry_date" in df.columns:
+                today = pd.Timestamp.today().normalize()
+                exp = df["expiry_date"].map(_parse_any_date)
+                need = df["days_to_expiry"].isna() & exp.notna()
+                df.loc[need, "days_to_expiry"] = (exp[need] - today).dt.days
+                df = df.drop(columns=["expiry_date"])
+            hit = int(df["outstanding_pct"].notna().sum())
+            print(f"[twse] 流通在外比例對上 {hit}/{len(df)} 檔", file=sys.stderr)
+
     df = derive_greeks(df, rate=rate)
 
     if with_hv:
@@ -658,6 +899,22 @@ def build_table(days: int = 5, types: Iterable[str] = DEFAULT_TYPES,
         if c not in df.columns:
             df[c] = np.nan
     return day, df[SCREENER_COLS]
+
+
+def _merge_fill(df: pd.DataFrame, other: pd.DataFrame, on: str,
+                cols: Iterable[str]) -> pd.DataFrame:
+    """把 other 的欄位併進 df，只補 df 原本是空的格子，絕不覆蓋既有資料。"""
+    use = [c for c in cols if c in other.columns]
+    if not use:
+        return df
+    df = df.merge(other[[on] + use], on=on, how="left", suffixes=("", "_new"))
+    for c in use:
+        src = f"{c}_new" if f"{c}_new" in df.columns else None
+        if src is None:          # df 原本沒這欄，merge 後直接就是新值
+            continue
+        df[c] = df[c].where(df[c].notna(), df[src])
+        df = df.drop(columns=[src])
+    return df
 
 
 def report_coverage(df: pd.DataFrame) -> None:
@@ -696,7 +953,8 @@ def cmd_build(a: argparse.Namespace) -> int:
     unds = [u.strip() for u in a.underlyings.split(",") if u.strip()] if a.underlyings else None
     day, df = build_table(days=a.days, types=_types(a.types), static_path=a.static,
                           with_hv=a.hv, hv_months=a.hv_months, rate=a.rate, gap=a.gap,
-                          underlyings=unds)
+                          underlyings=unds, with_outstanding=a.outstanding,
+                          outstanding_csv=a.outstanding_csv, report_page=a.report_page)
     df.to_csv(a.output, index=False, encoding="utf-8-sig")
     print(f"已輸出 {a.output}（交易日 {day}，{len(df)} 檔）")
     report_coverage(df)
@@ -710,6 +968,36 @@ def cmd_hv(a: argparse.Namespace) -> int:
     if a.output:
         hv.to_csv(a.output, index=False, encoding="utf-8-sig")
     return 0
+
+
+def cmd_outstanding(a: argparse.Namespace) -> int:
+    day = a.date
+    if not day:
+        day, _ = latest_quotes(("0999",), gap=a.gap)
+    df = fetch_outstanding(day, page_path=a.report_page, gap=a.gap)
+    print(f"交易日 {day}｜{len(df)} 檔有流通在外資料")
+    pd.set_option("display.width", 200)
+    pd.set_option("display.unicode.east_asian_width", True)
+    print(df.head(a.head).to_string(index=False))
+    na = df["outstanding_pct"].isna().mean()
+    print(f"\n流通在外比例空值比例：{na:.0%}"
+          f"｜中位數 {df['outstanding_pct'].median():.1f}%")
+    if a.output:
+        df.to_csv(a.output, index=False, encoding="utf-8-sig")
+        print(f"已輸出：{a.output}")
+    return 0
+
+
+def cmd_discover_api(a: argparse.Namespace) -> int:
+    pages = [a.page] if a.page else WARRANT_REPORT_PAGES
+    rc = 1
+    for page in pages:
+        try:
+            print(f"{page}\n  -> {discover_report_api(page, gap=a.gap)}")
+            rc = 0
+        except (TwseError, ThrottledError) as e:
+            print(f"{page}\n  -> 失敗：{e}")
+    return rc
 
 
 def cmd_static_template(a: argparse.Namespace) -> int:
@@ -750,6 +1038,11 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--hv-months", type=int, default=3)
     b.add_argument("--rate", type=float, default=RISK_FREE, help="無風險利率，預設 0.015")
     b.add_argument("--underlyings", help="只保留這些標的的權證，逗號分隔，例如 2330,2317")
+    b.add_argument("--outstanding", action="store_true",
+                   help="向證交所抓流通在外比例（端點於執行期由報表頁探得）")
+    b.add_argument("--outstanding-csv",
+                   help="改從檔案讀流通在外資料（券商／權證資訊揭露平台匯出）")
+    b.add_argument("--report-page", help="指定流通在外報表頁路徑，預設自動嘗試內建清單")
     b.set_defaults(func=cmd_build)
 
     h = sub.add_parser("hv", help="計算指定標的的 HV20")
@@ -757,6 +1050,18 @@ def build_parser() -> argparse.ArgumentParser:
     h.add_argument("--hv-months", type=int, default=3)
     h.add_argument("-o", "--output")
     h.set_defaults(func=cmd_hv)
+
+    o = sub.add_parser("outstanding", help="只抓流通在外比例")
+    o.add_argument("--date", help="交易日 YYYYMMDD，預設最近一個交易日")
+    o.add_argument("--report-page")
+    o.add_argument("--head", type=int, default=20)
+    o.add_argument("-o", "--output")
+    o.set_defaults(func=cmd_outstanding)
+
+    da = sub.add_parser("discover-api",
+                        help="讀報表頁的 data-api，印出真正的資料端點（不寫死網址）")
+    da.add_argument("page", nargs="?", help="報表頁路徑，預設內建的權證報表頁")
+    da.set_defaults(func=cmd_discover_api)
 
     t = sub.add_parser("static-template", help="產生權證靜態資料範本")
     t.add_argument("-o", "--output", default="warrant_static.csv")
