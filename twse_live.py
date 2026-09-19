@@ -826,7 +826,8 @@ def implied_vol(price: float, S: float, K: float, T: float, r: float, is_call: b
 
 
 def derive_greeks(df: pd.DataFrame, rate: float = RISK_FREE,
-                  today: pd.Timestamp | None = None) -> pd.DataFrame:
+                  today: pd.Timestamp | None = None,
+                  verbose: bool = True) -> pd.DataFrame:
     """
     用真實市價 + 靜態資料（strike / days_to_expiry / exercise_ratio）算 IV、Delta、實質槓桿。
     只填補原本是空值的欄位，不覆蓋已有資料。缺靜態資料的列維持 NaN。
@@ -845,6 +846,7 @@ def derive_greeks(df: pd.DataFrame, rate: float = RISK_FREE,
     unit_price = price / ratio.replace(0, np.nan)
 
     iv, delta, lev = [], [], []
+    why: dict[str, int] = {}
     for i in df.index:
         S = df.at[i, "underlying_price"]
         K = df.at[i, "strike"]
@@ -852,13 +854,33 @@ def derive_greeks(df: pd.DataFrame, rate: float = RISK_FREE,
         is_call = str(df.at[i, "warrant_type"]).strip() in ("認購", "call", "Call", "CALL")
         T = (days / 365.0) if pd.notna(days) and days > 0 else float("nan")
         p = unit_price.at[i]
-        sig = implied_vol(p, S, K, T, rate, is_call) if pd.notna(T) and pd.notna(K) and pd.notna(S) and pd.notna(p) else float("nan")
+
+        reason = None
+        if pd.isna(p) or p <= 0:
+            reason = "沒有買賣報價也沒有成交價"
+        elif pd.isna(K) or pd.isna(S):
+            reason = "缺履約價或標的股價"
+        elif pd.isna(T):
+            reason = "已到期或缺到期日"
+
+        sig = float("nan") if reason else implied_vol(p, S, K, T, rate, is_call)
+        if reason is None and pd.isna(sig):
+            reason = "權證價格落在無套利區間外（多半是深價內或掛單失真）"
+        if reason:
+            why[reason] = why.get(reason, 0) + 1
+
         dl = bs_delta(S, K, T, sig, rate, is_call) if pd.notna(sig) else float("nan")
         # 實質槓桿 = |Delta| x 標的股價 / 每單位標的的權證價格
         lv = abs(dl) * S / p if pd.notna(dl) and pd.notna(p) and p > 0 else float("nan")
         iv.append(sig * 100 if pd.notna(sig) else float("nan"))
         delta.append(abs(dl) if pd.notna(dl) else float("nan"))
         lev.append(lv)
+
+    if why and verbose:
+        total = sum(why.values())
+        print(f"[twse] IV/Delta/槓桿有 {total}/{len(df)} 檔算不出來，原因：", file=sys.stderr)
+        for r, n in sorted(why.items(), key=lambda x: -x[1]):
+            print(f"         {n:6d}  {r}", file=sys.stderr)
 
     df["iv"] = df["iv"].fillna(pd.Series(iv, index=df.index))
     df["delta"] = df["delta"].fillna(pd.Series(delta, index=df.index))
@@ -959,6 +981,7 @@ def build_table(days: int = 5, types: Iterable[str] = DEFAULT_TYPES,
                 twse_static: bool = True,
                 hv_all: bool = False) -> tuple[str, pd.DataFrame]:
     """把真實行情 + 靜態資料組成 warrant_screener.py 吃得下的標準表。"""
+    _partial: list[str] = []
     day, quotes = latest_quotes(types, gap=gap)
     print(f"[twse] 交易日 {day}，抓到 {len(quotes)} 檔權證行情", file=sys.stderr)
 
@@ -1056,6 +1079,7 @@ def build_table(days: int = 5, types: Iterable[str] = DEFAULT_TYPES,
                 print(f"[twse] 先套硬性門檻：{len(scope)} 檔權證中 {passed.sum()} 檔通過，"
                       f"只幫這些標的算 HV（要全部算請加 --hv-all）", file=sys.stderr)
                 scope = scope[passed]
+            _partial.append("hv20")
         unds = scope["underlying"].unique()
         print(f"[twse] 計算 {len(unds)} 檔標的的 HV20（每檔 {hv_months} 個請求，請耐心等）",
               file=sys.stderr)
@@ -1067,7 +1091,9 @@ def build_table(days: int = 5, types: Iterable[str] = DEFAULT_TYPES,
     for c in SCREENER_COLS:
         if c not in df.columns:
             df[c] = np.nan
-    return day, df[SCREENER_COLS]
+    out = df[SCREENER_COLS]
+    out.attrs["partial_cols"] = list(_partial)
+    return day, out
 
 
 def _hard_filter_underlyings(df: pd.DataFrame) -> pd.Series | None:
@@ -1116,11 +1142,21 @@ def _merge_fill(df: pd.DataFrame, other: pd.DataFrame, on: str,
     return df
 
 
-def report_coverage(df: pd.DataFrame) -> None:
+def report_coverage(df: pd.DataFrame, partial: Iterable[str] = ()) -> None:
+    """
+    列出各欄位的空值比例。partial 裡的欄位是「刻意只算一部分」的，
+    不標成失效——例如 hv20 預設只幫通過硬門檻的標的算。
+    """
+    partial = set(partial)
     print("\n【欄位覆蓋率】（空值比例太高的欄位，對應的門檻／加分項會失效）")
     na = df.isna().mean().sort_values(ascending=False)
     for c, r in na.items():
-        mark = "  ← 失效" if r > 0.5 else ""
+        if c in partial:
+            mark = "  ← 只算通過硬門檻的標的，屬預期"
+        elif r > 0.5:
+            mark = "  ← 失效"
+        else:
+            mark = ""
         print(f"  {c:20s} 空值 {r:5.0%}{mark}")
 
 
@@ -1157,7 +1193,7 @@ def cmd_build(a: argparse.Namespace) -> int:
                           twse_static=not a.no_twse_static, hv_all=a.hv_all)
     df.to_csv(a.output, index=False, encoding="utf-8-sig")
     print(f"已輸出 {a.output}（交易日 {day}，{len(df)} 檔）")
-    report_coverage(df)
+    report_coverage(df, partial=df.attrs.get("partial_cols", []))
     print(f"\n下一步： python warrant_screener.py {a.output} --min-score 3")
     return 0
 

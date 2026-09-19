@@ -331,5 +331,5 @@ CSV 版的分組表頭、`--` 空值）。
 
 離線測試隨時可重跑：
 ```bash
-python test_twse_live.py     # 100 項檢查，不連網
+python test_twse_live.py     # 105 項檢查，不連網
 ```

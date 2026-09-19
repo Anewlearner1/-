@@ -488,6 +488,43 @@ def test_score_max(root: Path) -> None:
     check((scored["score"] <= scored["score_max"]).all(), "得分不會超過實際滿分")
 
 
+def test_greeks_diagnostics(capsys_unused=None) -> None:
+    print("\n[16] 算不出 IV 時的原因統計")
+    base = {"warrant_type": "認購", "underlying_price": 100.0, "exercise_ratio": 1.0}
+    df = pd.DataFrame([
+        {**base, "strike": 100.0, "days_to_expiry": 180, "bid": 8.0, "ask": 8.1},   # 正常
+        {**base, "strike": 100.0, "days_to_expiry": 180, "bid": np.nan, "ask": np.nan,
+         "close": np.nan},                                                          # 無報價
+        {**base, "strike": np.nan, "days_to_expiry": 180, "bid": 8.0, "ask": 8.1},  # 缺履約價
+        {**base, "strike": 100.0, "days_to_expiry": 0, "bid": 8.0, "ask": 8.1},     # 已到期
+        {**base, "strike": 100.0, "days_to_expiry": 180, "bid": 120.0, "ask": 121.0},  # 超出上界
+    ])
+    out = T.derive_greeks(df, verbose=False)
+    check(pd.notna(out.loc[0, "iv"]) and pd.notna(out.loc[0, "leverage"]),
+          f"正常那筆算得出來（IV={out.loc[0, 'iv']:.1f}%）")
+    check(out.loc[1:, "iv"].isna().all(), "其餘四種情況都留 NaN，不會硬掰數字")
+    check(out.loc[1:, "leverage"].isna().all(), "算不出 IV 時槓桿也不給值")
+
+
+def test_coverage_partial(root: Path) -> None:
+    print("\n[17] 覆蓋率報告：hv20 只算一部分不該標成失效")
+    os.chdir(root)
+    real = T.fetch_hv_table
+    T.fetch_hv_table = lambda unds, **k: pd.DataFrame(
+        {"underlying": list(unds), "hv20": [30.0] * len(list(unds))})
+    try:
+        _, df = T.build_table(twse_static=False, days=1, static_path="static.csv",
+                              gap=0.0, with_hv=True)
+        check("hv20" in df.attrs.get("partial_cols", []),
+              "有套硬門檻時，hv20 被標記為「只算了一部分」")
+        _, df2 = T.build_table(twse_static=False, days=1, static_path="static.csv",
+                               gap=0.0, with_hv=True, hv_all=True)
+        check(df2.attrs.get("partial_cols") == [],
+              "--hv-all 時不標記（本來就算全部）")
+    finally:
+        T.fetch_hv_table = real
+
+
 def test_pipeline(root: Path) -> None:
     print("\n[3] 端對端管線（離線 fixtures）")
     days = T.recent_trading_days(5)          # 相對「今天」，測試不會隨日期失效
@@ -568,6 +605,8 @@ def main() -> int:
         test_static_in_build(tmp)
         test_hv_prefilter(tmp)
         test_score_max(tmp)
+        test_greeks_diagnostics()
+        test_coverage_partial(tmp)
     finally:
         os.chdir(cwd)
         shutil.rmtree(tmp, ignore_errors=True)
