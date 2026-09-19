@@ -755,16 +755,45 @@ def _parse_csv_table(text: str) -> pd.DataFrame:
     return pd.DataFrame(body, columns=header, dtype=str)
 
 
+def read_any_table(path: str | Path) -> pd.DataFrame:
+    """
+    讀使用者匯出的表格：.csv / .txt 走 CSV，.xlsx / .xls 走 Excel。
+    CSV 的編碼依序試 UTF-8-SIG、Big5、CP950（券商匯出常見 Big5）。
+    """
+    path = Path(path)
+    if not path.exists():
+        raise TwseError(f"檔案不存在：{path}")
+    if path.suffix.lower() in (".xlsx", ".xlsm", ".xls"):
+        try:
+            return pd.read_excel(path, dtype=str)
+        except ImportError as e:
+            raise TwseError(
+                f"讀 Excel 需要額外套件：pip install openpyxl（原始錯誤：{e}）\n"
+                f"或用 Excel 另存成「CSV UTF-8」再餵進來。"
+            ) from e
+        except Exception as e:  # noqa: BLE001
+            raise TwseError(f"讀不到 Excel：{path}（{e}）") from e
+
+    last: Exception | None = None
+    for enc in ("utf-8-sig", "big5", "cp950", "utf-8"):
+        try:
+            return pd.read_csv(path, encoding=enc, dtype=str)
+        except UnicodeDecodeError as e:
+            last = e
+        except OSError as e:
+            raise TwseError(f"讀不到檔案：{path}（{e}）") from e
+        except Exception as e:  # noqa: BLE001
+            last = e
+    raise TwseError(f"讀不到檔案：{path}（試過 utf-8-sig／big5／cp950，最後錯誤：{last}）")
+
+
 def load_outstanding_csv(path: str | Path) -> pd.DataFrame:
     """
     從你自己匯出的檔案讀流通在外資料（券商權證專區、權證資訊揭露平台…）。
     只要有「權證代號」，加上「流通在外比例」或「流通在外數量 + 發行數量」其中一組就行，
-    欄位名稱中英文皆可。
+    欄位名稱中英文皆可；CSV 與 Excel 都接。
     """
-    try:
-        raw = pd.read_csv(path, encoding="utf-8-sig", dtype=str)
-    except OSError as e:
-        raise TwseError(f"讀不到流通在外資料檔：{path}（{e}）") from e
+    raw = read_any_table(path)
     raw.columns = [str(c).strip() for c in raw.columns]
     # 英文欄位名也認
     alias = {"warrant_code": ["warrant_code", "code"],
@@ -1306,6 +1335,44 @@ def cmd_columns(a: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_check_outstanding(a: argparse.Namespace) -> int:
+    """
+    驗一份匯出檔能不能用，不必先跑整套 build。
+    成功就告訴你認出哪些欄位、比例怎麼算出來的；失敗就把實際欄位名整排印出來。
+    """
+    try:
+        raw = read_any_table(a.file)
+    except TwseError as e:
+        print(f"✗ {e}")
+        return 2
+    raw.columns = [str(c).strip() for c in raw.columns]
+    print(f"讀到 {len(raw)} 列、{len(raw.columns)} 欄")
+    print(f"欄位：{list(raw.columns)}")
+
+    try:
+        out = load_outstanding_csv(a.file)
+    except TwseError as e:
+        print(f"\n✗ 這份檔案還不能直接用：\n{e}")
+        print("\n把上面那排「欄位：」貼給開發者，或自己把對應的名稱加進 "
+              "OUTSTANDING_FIELDS 的候選清單即可。")
+        return 1
+
+    pct = out["outstanding_pct"]
+    src = "表上現成的比例欄" if "outstanding_qty" not in out.columns else "流通在外數量 ÷ 發行數量"
+    print(f"\n✓ 可以用。{len(out)} 檔權證，比例來源：{src}")
+    print(f"  有值 {pct.notna().sum()}／{len(out)} 檔"
+          f"｜中位數 {pct.median():.1f}%｜範圍 {pct.min():.1f}% ~ {pct.max():.1f}%")
+    bad = int(((pct < 0) | (pct > 100)).sum())
+    if bad:
+        print(f"  ⚠ 有 {bad} 筆不在 0~100% 之間，可能欄位對錯了或單位不同")
+    extra = [c for c in ("strike", "exercise_ratio", "expiry_date") if c in out.columns]
+    if extra:
+        print(f"  順手撿到的欄位：{extra}")
+    print(f"\n接著跑：\n  python twse_live.py build -o warrants.csv --days 5 --hv "
+          f"--outstanding-csv {a.file}")
+    return 0
+
+
 def cmd_discover_api(a: argparse.Namespace) -> int:
     pages = [a.page] if a.page else WARRANT_REPORT_PAGES
     rc = 1
@@ -1389,6 +1456,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     pg = sub.add_parser("pages", help="列出證交所權證專區有哪些報表頁（找流通在外用）")
     pg.set_defaults(func=cmd_pages)
+
+    co = sub.add_parser("check-outstanding",
+                        help="驗一份流通在外匯出檔能不能用（CSV／Excel 都接）")
+    co.add_argument("file")
+    co.set_defaults(func=cmd_check_outstanding)
 
     cl = sub.add_parser("columns", help="列出各報表實際的欄位名（判斷某份資料在不在證交所）")
     cl.add_argument("pages", nargs="*", help="報表頁路徑，不給就掃整個權證專區")

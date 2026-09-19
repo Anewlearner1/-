@@ -11,6 +11,7 @@ twse_live.py 的離線測試（不連網）。
 
 from __future__ import annotations
 
+import argparse
 import json
 import math
 import os
@@ -307,7 +308,7 @@ def test_outstanding_in_build(root: Path) -> None:
         T.build_table(twse_static=False, days=1, gap=0.0, outstanding_csv=str(root / "missing.csv"))
         check(False, "指定的檔案不存在時應報錯")
     except T.TwseError as e:
-        check("讀不到流通在外資料檔" in str(e), "指定的檔案不存在時明確報錯")
+        check("檔案不存在" in str(e), "指定的檔案不存在時明確報錯")
 
     # 但「向證交所抓」失敗只留空，不中斷整批
     real = T.fetch_outstanding
@@ -525,6 +526,35 @@ def test_coverage_partial(root: Path) -> None:
         T.fetch_hv_table = real
 
 
+def test_read_any_table(root: Path) -> None:
+    print("\n[18] 匯出檔：CSV / Big5 / 缺檔 / 驗檔指令")
+    os.chdir(root)
+    (root / "utf8.csv").write_text("權證代號,流通在外比例\n030079,35.5\n", encoding="utf-8-sig")
+    (root / "big5.csv").write_bytes(
+        "權證代號,流通在外數量,發行數量\n030079,3500,10000\n".encode("big5"))
+
+    check(len(T.read_any_table(root / "utf8.csv")) == 1, "UTF-8 CSV")
+    df = T.read_any_table(root / "big5.csv")
+    check(list(df.columns) == ["權證代號", "流通在外數量", "發行數量"],
+          f"Big5 CSV（券商匯出常見）：{list(df.columns)}")
+    check(T.load_outstanding_csv(root / "big5.csv").loc[0, "outstanding_pct"] == 35.0,
+          "Big5 檔也算得出比例")
+
+    try:
+        T.read_any_table(root / "nope.csv")
+        check(False, "檔案不存在時應報錯")
+    except T.TwseError as e:
+        check("檔案不存在" in str(e), "檔案不存在時明確報錯")
+
+    ns = argparse.Namespace(file=str(root / "utf8.csv"))
+    check(T.cmd_check_outstanding(ns) == 0, "check-outstanding 對可用的檔回傳 0")
+    (root / "bad.csv").write_text("代碼,價格\n030079,1.2\n", encoding="utf-8-sig")
+    ns2 = argparse.Namespace(file=str(root / "bad.csv"))
+    check(T.cmd_check_outstanding(ns2) == 1, "check-outstanding 對不能用的檔回傳 1")
+    ns3 = argparse.Namespace(file=str(root / "nope.csv"))
+    check(T.cmd_check_outstanding(ns3) == 2, "check-outstanding 對讀不到的檔回傳 2")
+
+
 def test_pipeline(root: Path) -> None:
     print("\n[3] 端對端管線（離線 fixtures）")
     days = T.recent_trading_days(5)          # 相對「今天」，測試不會隨日期失效
@@ -607,6 +637,7 @@ def main() -> int:
         test_score_max(tmp)
         test_greeks_diagnostics()
         test_coverage_partial(tmp)
+        test_read_any_table(tmp)
     finally:
         os.chdir(cwd)
         shutil.rmtree(tmp, ignore_errors=True)

@@ -209,8 +209,16 @@ python twse_live.py build -o warrants.csv --outstanding
 自己算。同一張表若順便帶了履約價／到期日／行使比例，也會一併撿走，
 那就不必再另外準備 `--static`。
 
-### 抓不到？用匯出檔
-權證資訊揭露平台、各家券商權證專區都有這份資料。匯出成 CSV 後：
+### 用匯出檔
+權證資訊揭露平台、各家券商權證專區都有這份資料。先驗檔案能不能用：
+
+```bash
+python twse_live.py check-outstanding 你的檔案.csv
+```
+它會印出讀到的欄位、比例是怎麼算出來的、中位數與範圍；
+不能用時會把**實際欄位名整排印出來**，加進 `OUTSTANDING_FIELDS` 即可。
+CSV 與 Excel（.xlsx/.xls）都接，CSV 編碼會依序試 UTF-8／Big5／CP950
+（券商匯出常見 Big5）。驗過之後：
 
 ```bash
 python twse_live.py build -o warrants.csv --outstanding-csv outs.csv
@@ -331,5 +339,5 @@ CSV 版的分組表頭、`--` 空值）。
 
 離線測試隨時可重跑：
 ```bash
-python test_twse_live.py     # 105 項檢查，不連網
+python test_twse_live.py     # 112 項檢查，不連網
 ```
