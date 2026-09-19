@@ -952,7 +952,8 @@ def build_table(days: int = 5, types: Iterable[str] = DEFAULT_TYPES,
                 with_outstanding: bool = False,
                 outstanding_csv: str | None = None,
                 report_page: str | None = None,
-                twse_static: bool = True) -> tuple[str, pd.DataFrame]:
+                twse_static: bool = True,
+                hv_all: bool = False) -> tuple[str, pd.DataFrame]:
     """把真實行情 + 靜態資料組成 warrant_screener.py 吃得下的標準表。"""
     day, quotes = latest_quotes(types, gap=gap)
     print(f"[twse] 交易日 {day}，抓到 {len(quotes)} 檔權證行情", file=sys.stderr)
@@ -1040,16 +1041,48 @@ def build_table(days: int = 5, types: Iterable[str] = DEFAULT_TYPES,
     df = derive_greeks(df, rate=rate)
 
     if with_hv:
-        unds = df.loc[df["underlying"].str.fullmatch(r"\d{4,6}"), "underlying"].unique()
+        # 個股代號：2330、00708L 都算；IX0001 這種指數沒有 STOCK_DAY 可查
+        is_stock = df["underlying"].str.fullmatch(r"\d[0-9A-Z]{3,5}")
+        scope = df[is_stock]
+        if not hv_all:
+            # HV 只是加分項，硬門檻用不到它。先套硬門檻，只幫活下來的標的算，
+            # 全市場約 900 檔標的 x 3 個請求 -> 通常縮到一百多檔。
+            passed = _hard_filter_underlyings(scope)
+            if passed is not None:
+                print(f"[twse] 先套硬性門檻：{len(scope)} 檔權證中 {passed.sum()} 檔通過，"
+                      f"只幫這些標的算 HV（要全部算請加 --hv-all）", file=sys.stderr)
+                scope = scope[passed]
+        unds = scope["underlying"].unique()
         print(f"[twse] 計算 {len(unds)} 檔標的的 HV20（每檔 {hv_months} 個請求，請耐心等）",
               file=sys.stderr)
         hv = fetch_hv_table(unds, months=hv_months, gap=gap)
         df["hv20"] = df["hv20"].fillna(df["underlying"].map(hv.set_index("underlying")["hv20"]))
+        print(f"[twse] HV20 對上 {int(df['hv20'].notna().sum())}/{len(df)} 檔權證",
+              file=sys.stderr)
 
     for c in SCREENER_COLS:
         if c not in df.columns:
             df[c] = np.nan
     return day, df[SCREENER_COLS]
+
+
+def _hard_filter_underlyings(df: pd.DataFrame) -> pd.Series | None:
+    """
+    借用 warrant_screener 的硬性門檻，算出哪些權證會活下來。
+    用預設門檻；之後若把門檻放寬，沒算到 HV 的標的那一項就不得分（不會出錯）。
+    匯入失敗就回 None，交給呼叫端全部算。
+    """
+    try:
+        from warrant_screener import HardFilter, add_derived, apply_hard_filters
+    except Exception as e:  # noqa: BLE001
+        print(f"[twse] 讀不到 warrant_screener 的硬性門檻（{e}），HV 只好全部算",
+              file=sys.stderr)
+        return None
+    try:
+        return apply_hard_filters(add_derived(df), HardFilter())["passed_hard"]
+    except Exception as e:  # noqa: BLE001
+        print(f"[twse] 套硬性門檻失敗（{e}），HV 只好全部算", file=sys.stderr)
+        return None
 
 
 def _fill_days_to_expiry(df: pd.DataFrame) -> pd.DataFrame:
@@ -1117,7 +1150,7 @@ def cmd_build(a: argparse.Namespace) -> int:
                           with_hv=a.hv, hv_months=a.hv_months, rate=a.rate, gap=a.gap,
                           underlyings=unds, with_outstanding=a.outstanding,
                           outstanding_csv=a.outstanding_csv, report_page=a.report_page,
-                          twse_static=not a.no_twse_static)
+                          twse_static=not a.no_twse_static, hv_all=a.hv_all)
     df.to_csv(a.output, index=False, encoding="utf-8-sig")
     print(f"已輸出 {a.output}（交易日 {day}，{len(df)} 檔）")
     report_coverage(df)
@@ -1239,6 +1272,8 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--static", help="權證靜態資料 CSV（履約價／到期日／行使比例…）")
     b.add_argument("--hv", action="store_true", help="另外計算標的 HV20（慢）")
     b.add_argument("--hv-months", type=int, default=3)
+    b.add_argument("--hv-all", action="store_true",
+                   help="HV 算全市場標的（預設只算通過硬性門檻的，快很多）")
     b.add_argument("--rate", type=float, default=RISK_FREE, help="無風險利率，預設 0.015")
     b.add_argument("--underlyings", help="只保留這些標的的權證，逗號分隔，例如 2330,2317")
     b.add_argument("--outstanding", action="store_true",

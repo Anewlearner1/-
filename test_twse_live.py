@@ -424,6 +424,42 @@ def test_static_in_build(root: Path) -> None:
         T.fetch_warrant_static = real
 
 
+def test_hv_prefilter(root: Path) -> None:
+    print("\n[14] --hv 只算通過硬性門檻的標的")
+    os.chdir(root)
+    calls: list[list[str]] = []
+
+    def fake_hv(unds, months=3, gap=0.0, verbose=True):
+        unds = sorted(unds)
+        calls.append(unds)
+        return pd.DataFrame({"underlying": unds, "hv20": [30.0] * len(unds)})
+
+    real_hv, real_static = T.fetch_hv_table, T.fetch_warrant_static
+    _e = pd.Timestamp.today().normalize() + pd.Timedelta(days=180)
+    exp = f"{_e.year - 1911}年{_e.month:02d}月{_e.day:02d}日"
+    # 030079 撐得過硬門檻（價外 2%、槓桿約 4.5、價差 0.8%、5 日均量 1800 張）；
+    # 030080 的 5 日均量只有 50 張，會被剔除
+    T.fetch_warrant_static = lambda *a, **k: pd.DataFrame({
+        "warrant_code": ["030079", "030080"], "strike": [2450.0, 3000.0],
+        "exercise_ratio": [0.004, 0.01], "warrant_type": ["認購", "認購"],
+        "expiry_date": [exp, exp], "underlying": ["2330", "2330"]})
+    T.fetch_hv_table = fake_hv
+    try:
+        _, df = T.build_table(days=5, gap=0.0, with_hv=True)
+        d = df.set_index("warrant_code")
+        check(3.0 <= d.loc["030079", "leverage"] <= 6.0,
+              f"030079 槓桿 {d.loc['030079', 'leverage']:.2f} 在門檻內")
+        check(len(calls) == 1, "只呼叫一次 HV 計算")
+        check(calls[0] == ["2330"], f"只算通過硬門檻的標的：{calls[0]}")
+
+        calls.clear()
+        _, df2 = T.build_table(days=5, gap=0.0, with_hv=True, hv_all=True)
+        check(calls[0] == ["2317", "2330"], f"--hv-all 算全部個股標的：{calls[0]}")
+        check("IX0001" not in calls[0], "指數標的不送進 STOCK_DAY")
+    finally:
+        T.fetch_hv_table, T.fetch_warrant_static = real_hv, real_static
+
+
 def test_pipeline(root: Path) -> None:
     print("\n[3] 端對端管線（離線 fixtures）")
     days = T.recent_trading_days(5)          # 相對「今天」，測試不會隨日期失效
@@ -502,6 +538,7 @@ def main() -> int:
         test_warrant_static()
         test_grouped_csv_header()
         test_static_in_build(tmp)
+        test_hv_prefilter(tmp)
     finally:
         os.chdir(cwd)
         shutil.rmtree(tmp, ignore_errors=True)
