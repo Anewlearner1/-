@@ -1,0 +1,77 @@
+# Forehand scoring rubric.
+#
+# CALIBRATION STATUS: placeholder thresholds based on general coaching cues,
+# NOT calibrated against real match footage. An earlier version of this file
+# (and a matching serve.yaml) had been tuned against a confirmed corpus of
+# real clips; that calibration was lost with the rest of the project (see
+# README) and has not been redone. Treat scores from this rubric as
+# directionally useful, not precise, until re-checked against real video of
+# known-good and known-bad technique.
+
+category_thresholds:
+  excellent: 80
+  good: 50
+
+metrics:
+  shoulder_turn_deg:
+    weight: 1.2
+    poor_at: 15
+    excellent_at: 70
+    feedback:
+      excellent: "轉肩幅度足夠，上半身有確實蓄力。"
+      good: "轉肩幅度尚可，再多轉一些能增加揮拍力量。"
+      needs_work: "轉肩幅度不足，力量主要靠手臂，容易受傷且力量有限。"
+
+  hip_shoulder_separation_deg:
+    weight: 1.0
+    poor_at: 5
+    excellent_at: 35
+    feedback:
+      excellent: "髖肩分離角度大，能有效利用身體旋轉產生力量。"
+      good: "髖肩分離尚可，還有空間讓下半身先啟動、上半身延後跟上。"
+      needs_work: "髖肩幾乎同步轉動，沒有利用到旋轉蓄力，力量會偏小。"
+
+  knee_bend_deg:
+    weight: 0.8
+    poor_at: 5
+    excellent_at: 30
+    feedback:
+      excellent: "膝蓋有明顯彎曲，重心夠低，準備姿勢紮實。"
+      good: "膝蓋彎曲程度普通，可以再蹲低一點。"
+      needs_work: "膝蓋幾乎打直，重心太高，力量無法從腿部傳導上來。"
+
+  contact_height:
+    weight: 1.0
+    poor_at: -0.1
+    excellent_at: 0.35
+    feedback:
+      excellent: "擊球點在身體前方、腰部以上，是理想的正拍擊球高度。"
+      good: "擊球高度尚可，稍微再往前上方一點會更理想。"
+      needs_work: "擊球點偏低或太靠近身體，通常代表準備不夠早。"
+
+  follow_through_time_s:
+    weight: 0.6
+    poor_at: 0.03
+    excellent_at: 0.18
+    feedback:
+      excellent: "隨揮完整，動作沒有中途停止。"
+      good: "隨揮長度普通，可以再讓球拍多走一段。"
+      needs_work: "隨揮太短，揮拍像是被中途煞車，力量跟穩定度都會受影響。"
+
+  weight_transfer:
+    weight: 0.8
+    poor_at: 0.0
+    excellent_at: 0.5
+    feedback:
+      excellent: "擊球前重心明顯往前/往上轉移，體重確實用上了。"
+      good: "重心轉移幅度普通。"
+      needs_work: "幾乎沒有重心轉移，力量沒有從下半身傳到球拍。"
+
+  trunk_lean_deg:
+    weight: 0.4
+    poor_at: 35
+    excellent_at: 5
+    feedback:
+      excellent: "擊球時軀幹穩定、沒有過度前傾或側倒。"
+      good: "軀幹角度普通，偏離垂直略多。"
+      needs_work: "擊球時軀幹嚴重傾斜，平衡與穩定度會受影響。"

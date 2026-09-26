@@ -103,3 +103,34 @@ def test_a_motionless_clip_exits_nonzero(monkeypatch, video_file, capsys):
 
     assert cli.main(["speed", str(video_file), "--quiet"]) == 1
     assert "未偵測到揮拍動作" in capsys.readouterr().err
+
+
+# ------------------------------------------------------------------ analyze
+def test_analyze_prints_a_score_per_swing(stub_pose, video_file, capsys):
+    assert cli.main(["analyze", str(video_file), "--quiet"]) == 0
+    out = capsys.readouterr().out
+    assert "正拍" in out
+    assert "評分" in out
+    assert "  1" in out and "  2" in out
+
+
+def test_analyze_writes_json_and_html(stub_pose, video_file, tmp_path):
+    json_file = tmp_path / "report.json"
+    html_file = tmp_path / "report.html"
+    assert cli.main(["analyze", str(video_file), "--quiet",
+                     "--json", str(json_file), "--html", str(html_file)]) == 0
+
+    data = json.loads(json_file.read_text(encoding="utf-8"))
+    assert data["hand"] in ("right", "left")
+    assert len(data["swings"]) == 2
+    for swing in data["swings"]:
+        assert swing["stroke"] == "forehand"
+        assert swing["score"]["overall"] >= 0
+
+    html = html_file.read_text(encoding="utf-8")
+    assert "<html" in html and "正拍" in html
+
+
+def test_analyze_missing_video_is_reported(tmp_path, capsys):
+    assert cli.main(["analyze", str(tmp_path / "nope.mp4")]) == 2
+    assert "找不到影片檔" in capsys.readouterr().err

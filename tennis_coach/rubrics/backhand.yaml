@@ -1,0 +1,70 @@
+# Backhand scoring rubric. Same calibration caveat as forehand.yaml: these
+# are placeholder thresholds, not calibrated against real footage.
+
+category_thresholds:
+  excellent: 80
+  good: 50
+
+metrics:
+  shoulder_turn_deg:
+    weight: 1.2
+    poor_at: 15
+    excellent_at: 75
+    feedback:
+      excellent: "轉肩幅度足夠，蓄力充分。"
+      good: "轉肩幅度尚可，再多轉一些能增加力量。"
+      needs_work: "轉肩幅度不足，反拍尤其依賴轉體，這會讓力量明顯不夠。"
+
+  hip_shoulder_separation_deg:
+    weight: 1.0
+    poor_at: 5
+    excellent_at: 30
+    feedback:
+      excellent: "髖肩分離角度大，旋轉蓄力充分。"
+      good: "髖肩分離尚可。"
+      needs_work: "髖肩幾乎同步轉動，沒有利用到旋轉蓄力。"
+
+  knee_bend_deg:
+    weight: 0.7
+    poor_at: 5
+    excellent_at: 28
+    feedback:
+      excellent: "膝蓋彎曲充分，重心夠低。"
+      good: "膝蓋彎曲程度普通。"
+      needs_work: "膝蓋幾乎打直，重心太高。"
+
+  contact_height:
+    weight: 1.0
+    poor_at: -0.15
+    excellent_at: 0.3
+    feedback:
+      excellent: "擊球點在身體前方、高度適中，是理想的反拍擊球位置。"
+      good: "擊球高度尚可。"
+      needs_work: "擊球點偏低或太靠近身體，通常代表準備不夠早。"
+
+  follow_through_time_s:
+    weight: 0.6
+    poor_at: 0.03
+    excellent_at: 0.16
+    feedback:
+      excellent: "隨揮完整，動作連貫。"
+      good: "隨揮長度普通。"
+      needs_work: "隨揮太短，動作像是中途煞車。"
+
+  weight_transfer:
+    weight: 0.7
+    poor_at: 0.0
+    excellent_at: 0.45
+    feedback:
+      excellent: "擊球前重心確實轉移，體重有用上。"
+      good: "重心轉移幅度普通。"
+      needs_work: "幾乎沒有重心轉移，力量沒有從下半身傳上來。"
+
+  trunk_lean_deg:
+    weight: 0.4
+    poor_at: 35
+    excellent_at: 5
+    feedback:
+      excellent: "擊球時軀幹穩定。"
+      good: "軀幹角度普通。"
+      needs_work: "擊球時軀幹嚴重傾斜，平衡受影響。"

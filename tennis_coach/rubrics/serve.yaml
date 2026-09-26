@@ -1,0 +1,75 @@
+# Serve scoring rubric. Same calibration caveat as forehand.yaml: these are
+# placeholder thresholds, not calibrated against real footage. A previous
+# version of this file *was* calibrated against a confirmed corpus of real
+# serve clips (4 videos, 7 confirmed swings) -- that calibration data was
+# lost with the rest of the project (see README) and would need to be redone
+# the same way: collect real serve footage, manually confirm contact frames,
+# and compare this rubric's scores against a human's judgement of each one.
+
+category_thresholds:
+  excellent: 80
+  good: 50
+
+metrics:
+  prep_time_s:
+    weight: 0.6
+    poor_at: 0.15
+    excellent_at: 0.6
+    feedback:
+      excellent: "拋球到揮拍的準備時間充分，動作不匆忙。"
+      good: "準備時間普通。"
+      needs_work: "準備時間太短，動作偏趕，通常會犧牲節奏跟穩定度。"
+
+  shoulder_turn_deg:
+    weight: 1.0
+    poor_at: 10
+    excellent_at: 60
+    feedback:
+      excellent: "拋球階段有轉肩、形成良好的引拍姿勢（trophy position）。"
+      good: "轉肩幅度普通。"
+      needs_work: "幾乎沒有轉肩，引拍動作不完整，力量會偏小。"
+
+  knee_bend_deg:
+    weight: 1.0
+    poor_at: 5
+    excellent_at: 35
+    feedback:
+      excellent: "拋球時膝蓋有明顯彎曲蓄力，能用腿部力量往上跳發力。"
+      good: "膝蓋彎曲程度普通。"
+      needs_work: "膝蓋幾乎沒有彎曲，發球力量完全靠手臂，缺少腿部驅動。"
+
+  contact_height:
+    weight: 1.3
+    poor_at: 0.1
+    excellent_at: 0.55
+    feedback:
+      excellent: "擊球點夠高，能有效增加發球角度跟威力。"
+      good: "擊球高度普通，還有向上延伸的空間。"
+      needs_work: "擊球點偏低，發球威力跟角度都會受限，通常代表拋球或跳躍時機不對。"
+
+  weight_transfer:
+    weight: 1.0
+    poor_at: 0.0
+    excellent_at: 0.6
+    feedback:
+      excellent: "擊球瞬間有明顯向上蹬地的動作，腿部力量確實傳到球拍上。"
+      good: "向上發力幅度普通。"
+      needs_work: "幾乎沒有向上蹬地的動作，發球力量主要只靠手臂跟肩膀。"
+
+  follow_through_time_s:
+    weight: 0.5
+    poor_at: 0.03
+    excellent_at: 0.16
+    feedback:
+      excellent: "隨揮完整，拍子順著身體自然收下來。"
+      good: "隨揮長度普通。"
+      needs_work: "隨揮太短，動作像是中途煞車。"
+
+  trunk_lean_deg:
+    weight: 0.4
+    poor_at: 45
+    excellent_at: 10
+    feedback:
+      excellent: "擊球瞬間軀幹角度穩定。"
+      good: "軀幹角度普通。"
+      needs_work: "軀幹角度偏差大，可能是拋球位置不穩或身體過度後仰/側倒。"

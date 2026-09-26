@@ -18,6 +18,7 @@ def build_parser() -> argparse.ArgumentParser:
             "範例:\n"
             "  tennis-coach speed serve.mp4\n"
             "  tennis-coach speed serve.mp4 --hand right --json out/speed.json\n"
+            "  tennis-coach analyze rally.mp4 --html out/report.html\n"
         ),
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -36,6 +37,20 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--max-frames", type=int, default=None, metavar="N",
                    help="只分析前 N 幀（快速測試用）")
     s.add_argument("--quiet", "-q", action="store_true", help="不顯示進度")
+
+    a = sub.add_parser("analyze", help="評分每一次揮拍的技術（正拍/反拍/發球）")
+    a.add_argument("video", help="影片路徑 (mp4 / mov / avi)")
+    a.add_argument("--hand", default="auto", choices=["auto", "right", "left"],
+                   help="指定持拍手，預設自動判別")
+    a.add_argument("--json", default=None, metavar="FILE",
+                   help="另外輸出完整結果 JSON")
+    a.add_argument("--html", default=None, metavar="FILE",
+                   help="另外輸出 HTML 報告")
+    a.add_argument("--model-complexity", type=int, default=2, choices=[0, 1, 2],
+                   help="姿態模型精度，2 最準但最慢，預設 2")
+    a.add_argument("--max-frames", type=int, default=None, metavar="N",
+                   help="只分析前 N 幀（快速測試用）")
+    a.add_argument("--quiet", "-q", action="store_true", help="不顯示進度")
     return parser
 
 
@@ -92,6 +107,83 @@ def cmd_speed(args: argparse.Namespace) -> int:
         if verbose:
             print(f"  [JSON] {path}")
     return 0
+
+
+def cmd_analyze(args: argparse.Namespace) -> int:
+    from .analyze import analyze_video
+    from .report import render_html
+
+    video = Path(args.video)
+    if not video.exists():
+        print(f"錯誤: 找不到影片檔 {video}", file=sys.stderr)
+        return 2
+
+    verbose = not args.quiet
+    if verbose:
+        print(f"\n  分析影片: {video}")
+
+    seq, feats, reports = analyze_video(
+        video, hand=None if args.hand == "auto" else args.hand,
+        model_complexity=args.model_complexity, max_frames=args.max_frames,
+        progress=verbose,
+    )
+
+    quality = seq.quality()
+    if quality["usable"] != "True":
+        print(f"\n  ⚠️  追蹤品質偏低（偵測率 {quality['detected_ratio']:.0%}，"
+              f"平均可見度 {quality['mean_visibility']:.2f}）— 評分僅供參考。")
+
+    if not reports:
+        print("\n  未偵測到揮拍動作。", file=sys.stderr)
+        return 1
+
+    print_analyze_summary(reports, feats)
+
+    if args.json:
+        path = Path(args.json)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "video": str(video),
+            "fps": round(seq.fps, 2),
+            "hand": feats.hand,
+            "tracking_quality": quality,
+            "swings": [r.to_dict() for r in reports],
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
+        if verbose:
+            print(f"  [JSON] {path}")
+
+    if args.html:
+        path = Path(args.html)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(render_html(reports), encoding="utf-8")
+        if verbose:
+            print(f"  [HTML] {path}")
+
+    return 0
+
+
+def print_analyze_summary(reports, feats) -> None:
+    from .feedback import STROKE_ZH
+
+    line = "─" * 62
+    print(f"\n{line}")
+    print(f"  慣用手：{'右手' if feats.hand == 'right' else '左手'}　"
+          f"揮拍次數：{len(reports)}")
+    print(line)
+
+    headers = ["#", "觸球幀", "類型", "評分"]
+    widths = [4, 8, 8, 8]
+    print("  " + "".join(_pad(h, w) for h, w in zip(headers, widths)))
+
+    for i, r in enumerate(reports, start=1):
+        overall = f"{r.score.overall:.0f}" if r.score else "—"
+        cells = [str(i), str(r.swing.contact), STROKE_ZH.get(r.stroke, r.stroke), overall]
+        print("  " + "".join(_pad(c, w) for c, w in zip(cells, widths)))
+
+    print(f"\n{line}")
+    for i, r in enumerate(reports, start=1):
+        print(f"  第 {i} 拍：{r.summary}")
+    print()
 
 
 def print_speed_summary(results, feats, quality) -> None:
@@ -152,6 +244,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "speed":
             return cmd_speed(args)
+        if args.command == "analyze":
+            return cmd_analyze(args)
     except (FileNotFoundError, RuntimeError, ValueError) as e:
         print(f"錯誤: {e}", file=sys.stderr)
         return 1
