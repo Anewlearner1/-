@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Rally AI — 上傳影片</title>
+<style>
+  :root {
+    --fg: #1a1a1a;
+    --bg: #ffffff;
+    --border: #d9d9d9;
+    --info-bg: #fff8e1;
+    --info-border: #f0c419;
+    --fail-bg: #fdecea;
+    --fail-border: #d93025;
+    --muted: #666;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif;
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 24px 16px 64px;
+    color: var(--fg);
+    background: var(--bg);
+    line-height: 1.6;
+  }
+  h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
+  h2 { font-size: 1.15rem; margin-top: 0; }
+  .checklist { list-style: none; padding: 0; margin: 16px 0; }
+  .checklist li {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-bottom: 10px;
+  }
+  .checklist .title { font-weight: 600; }
+  .checklist .desc { color: var(--muted); font-size: 0.92rem; margin-top: 4px; }
+  button {
+    font-size: 1rem;
+    padding: 10px 18px;
+    border-radius: 8px;
+    border: 1px solid #333;
+    background: #1a1a1a;
+    color: #fff;
+    cursor: pointer;
+  }
+  button.secondary {
+    background: #fff;
+    color: #1a1a1a;
+  }
+  .btn-row { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+  #screen-loading { text-align: center; padding: 48px 0; }
+  .spinner {
+    width: 36px; height: 36px;
+    border: 4px solid var(--border);
+    border-top-color: #1a1a1a;
+    border-radius: 50%;
+    margin: 0 auto 16px;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .card { border-radius: 10px; padding: 16px; margin: 16px 0; }
+  .card.info { background: var(--info-bg); border: 1px solid var(--info-border); }
+  .card.fail { background: var(--fail-bg); border: 1px solid var(--fail-border); }
+  ul.msg-list { list-style: none; padding: 0; margin: 12px 0; }
+  ul.msg-list li { margin-bottom: 10px; padding-left: 1.6em; position: relative; white-space: pre-wrap; }
+  li.msg-info::before { content: "⚠"; position: absolute; left: 0; }
+  li.msg-fail::before { content: "✕"; position: absolute; left: 0; color: var(--fail-border); }
+  li.msg-error::before { content: "⚠"; position: absolute; left: 0; }
+  .muted { color: var(--muted); font-size: 0.9rem; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+
+<h1>Rally AI</h1>
+<p class="muted">上傳比賽影片，取得回合分析與拍攝建議。</p>
+
+<!-- §1 pre-upload shooting guidance -->
+<section id="screen-guidance">
+  <h2>拍攝前，請確認：</h2>
+  <ul class="checklist">
+    <li>
+      <div class="title">幀率 60fps 以上</div>
+      <div class="desc">幀率過低時，球每幀移動距離較大，容易模糊不清。</div>
+    </li>
+    <li>
+      <div class="title">腳架固定、機位在底線後方高處</div>
+      <div class="desc">手持拍攝容易晃動；機位太低或太側，難以看到完整球場。</div>
+    </li>
+    <li>
+      <div class="title">只上傳回合片段</div>
+      <div class="desc">廣告、換場、暖身畫面會干擾分析，請先剪輯掉非比賽內容。</div>
+    </li>
+  </ul>
+
+  <label class="btn-row">
+    <button type="button" onclick="document.getElementById('file-input').click()">選擇影片上傳</button>
+  </label>
+  <input id="file-input" type="file" accept="video/*" hidden />
+</section>
+
+<!-- §2 uploading / quality-gate in progress -->
+<section id="screen-loading" hidden>
+  <div class="spinner" aria-hidden="true"></div>
+  <p>檢查影片品質中…</p>
+</section>
+
+<!-- §3a info-only confirmation card (passed, with non-blocking messages) -->
+<section id="screen-info_confirm" hidden>
+  <p>影片已通過基本檢查，開始上傳處理。</p>
+  <div class="card info">
+    <ul class="msg-list" id="info-messages"></ul>
+  </div>
+  <div class="btn-row">
+    <button id="info-continue-btn" type="button">知道了，開始分析</button>
+    <button id="info-reupload-btn" type="button" class="secondary">我要重新上傳</button>
+  </div>
+</section>
+
+<!-- §3a clean pass, nothing to confirm -->
+<section id="screen-submitted" hidden>
+  <h2>影片已送出處理</h2>
+  <p>已加入分析佇列，完成後可在儀表板查看結果。</p>
+  <p class="muted">處理編號：<span id="submitted-upload-id"></span></p>
+</section>
+
+<!-- §3b blocking re-shoot screen -->
+<section id="screen-reshoot" hidden>
+  <h2>這段影片暫時無法分析，請依下列建議重新拍攝後再上傳：</h2>
+  <div class="card fail">
+    <ul class="msg-list" id="reshoot-messages"></ul>
+  </div>
+  <div class="btn-row">
+    <button id="reshoot-reupload-btn" type="button">重新選擇影片</button>
+    <button id="reshoot-guidance-btn" type="button" class="secondary">查看拍攝指引</button>
+  </div>
+</section>
+
+<!-- §4 malformed/unreadable file or other non-QualityReport error -->
+<section id="screen-error" hidden>
+  <h2>上傳發生問題</h2>
+  <div class="card fail">
+    <ul class="msg-list" id="error-messages"></ul>
+  </div>
+  <div class="btn-row">
+    <button id="error-reupload-btn" type="button">重新選擇影片</button>
+  </div>
+</section>
+
+<script src="upload_flow.js"></script>
+<script src="upload.js"></script>
+</body>
+</html>
