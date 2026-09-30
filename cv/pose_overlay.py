@@ -40,7 +40,7 @@ import dataclasses
 import os
 import urllib.request
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import cv2
 import numpy as np
@@ -187,6 +187,109 @@ def _draw_skeleton(frame: np.ndarray, candidate: PersonCandidate) -> None:
                     lineType=cv2.LINE_AA)
 
 
+# ------------------------------------------------------------------- shared
+# Both the video-rendering path (generate_pose_overlay) and the
+# landmarks-only path (extract_player_landmarks, added for M2 shot-timing
+# work -- see ml/shot_timing.py) need the same "decode frame -> run
+# MediaPipe -> build candidates -> pick the target player" sequence. This
+# helper holds that shared core once, so the two paths cannot drift apart;
+# each path supplies its own ``on_frame`` callback for what it does with the
+# result (draw + write a video frame, vs. just record the landmarks).
+def _run_pose_pipeline(
+    video_path: Path,
+    *,
+    model_complexity: int,
+    num_candidate_poses: int,
+    player_selector: Optional[PlayerSelector],
+    min_pose_detection_confidence: float,
+    max_frames: Optional[int],
+    progress: bool,
+    log_label: str,
+    on_frame: Callable[[int, np.ndarray, list[PersonCandidate], Optional[int]], None],
+) -> tuple[int, float, int, int, int]:
+    """Decode ``video_path``, run pose detection + player selection per frame.
+
+    Calls ``on_frame(frame_index, frame, candidates, chosen_idx)`` for every
+    decoded frame (``chosen_idx`` is None if no candidate was selected).
+
+    Returns:
+        (frame_count, fps, width, height, frames_with_pose).
+
+    Raises:
+        FileNotFoundError: video_path does not exist.
+        RuntimeError: the video can't be decoded or has no frames.
+    """
+    import mediapipe as mp
+    from mediapipe.tasks import python as mp_python
+    from mediapipe.tasks.python import vision as mp_vision
+
+    if not video_path.exists():
+        raise FileNotFoundError(f"Video not found: {video_path}")
+
+    selector = player_selector or default_player_selector()
+    selector.reset()
+
+    model_path = ensure_model(model_complexity, progress=progress)
+
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        raise RuntimeError(f"Could not open video (unsupported codec?): {video_path}")
+
+    fps = float(cap.get(cv2.CAP_PROP_FPS)) or 30.0
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    options = mp_vision.PoseLandmarkerOptions(
+        base_options=mp_python.BaseOptions(model_asset_path=str(model_path)),
+        running_mode=mp_vision.RunningMode.VIDEO,
+        num_poses=max(1, num_candidate_poses),
+        min_pose_detection_confidence=min_pose_detection_confidence,
+        min_pose_presence_confidence=min_pose_detection_confidence,
+        min_tracking_confidence=min_pose_detection_confidence,
+    )
+
+    frame_count = 0
+    frames_with_pose = 0
+
+    try:
+        with mp_vision.PoseLandmarker.create_from_options(options) as landmarker:
+            while True:
+                if max_frames is not None and frame_count >= max_frames:
+                    break
+                ok, frame = cap.read()
+                if not ok:
+                    break
+
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+                timestamp_ms = int(frame_count * 1000 / fps)
+                result = landmarker.detect_for_video(mp_image, timestamp_ms)
+
+                candidates = _candidates_from_result(
+                    result.pose_landmarks or [], width, height)
+                chosen_idx = selector.select(candidates)
+                if chosen_idx is not None:
+                    frames_with_pose += 1
+
+                on_frame(frame_count, frame, candidates, chosen_idx)
+
+                frame_count += 1
+                if progress and frame_count % 30 == 0:
+                    print(f"\r[{log_label}] processed {frame_count} frames...",
+                          end="", flush=True)
+    finally:
+        cap.release()
+
+    if progress:
+        print(f"\r[{log_label}] done, {frame_count} frames "
+              f"({frames_with_pose} with a detected player)          ")
+
+    if frame_count == 0:
+        raise RuntimeError(f"Video had no readable frames: {video_path}")
+
+    return frame_count, fps, width, height, frames_with_pose
+
+
 # ------------------------------------------------------------------- main
 def generate_pose_overlay(
     video_path: str | Path,
@@ -225,84 +328,51 @@ def generate_pose_overlay(
         RuntimeError: the video can't be decoded, has no frames, or the
             output video file could not be opened for writing.
     """
-    import mediapipe as mp
-    from mediapipe.tasks import python as mp_python
-    from mediapipe.tasks.python import vision as mp_vision
-
     video_path = Path(video_path)
     output_path = Path(output_path)
-    if not video_path.exists():
-        raise FileNotFoundError(f"Video not found: {video_path}")
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    selector = player_selector or default_player_selector()
-    selector.reset()
-
-    model_path = ensure_model(model_complexity, progress=progress)
-
-    cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
+    # Writer is created lazily inside the callback once we know fps/width/
+    # height from the first call into the shared pipeline -- but those are
+    # only available *after* _run_pose_pipeline opens the capture. Open our
+    # own capture just for those dimensions would duplicate work, so instead
+    # we open the writer up front using the same probe cv2.VideoCapture does
+    # internally: cheapest is to peek the video once here.
+    if not video_path.exists():
+        raise FileNotFoundError(f"Video not found: {video_path}")
+    probe = cv2.VideoCapture(str(video_path))
+    if not probe.isOpened():
+        probe.release()
         raise RuntimeError(f"Could not open video (unsupported codec?): {video_path}")
-
-    fps = float(cap.get(cv2.CAP_PROP_FPS)) or 30.0
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = float(probe.get(cv2.CAP_PROP_FPS)) or 30.0
+    width = int(probe.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(probe.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    probe.release()
 
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     writer = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
     if not writer.isOpened():
-        cap.release()
         raise RuntimeError(f"Could not open output video for writing: {output_path}")
 
-    options = mp_vision.PoseLandmarkerOptions(
-        base_options=mp_python.BaseOptions(model_asset_path=str(model_path)),
-        running_mode=mp_vision.RunningMode.VIDEO,
-        num_poses=max(1, num_candidate_poses),
-        min_pose_detection_confidence=min_pose_detection_confidence,
-        min_pose_presence_confidence=min_pose_detection_confidence,
-        min_tracking_confidence=min_pose_detection_confidence,
-    )
-
-    frame_count = 0
-    frames_with_pose = 0
+    def on_frame(_frame_idx, frame, candidates, chosen_idx):
+        if chosen_idx is not None:
+            _draw_skeleton(frame, candidates[chosen_idx])
+        writer.write(frame)
 
     try:
-        with mp_vision.PoseLandmarker.create_from_options(options) as landmarker:
-            while True:
-                if max_frames is not None and frame_count >= max_frames:
-                    break
-                ok, frame = cap.read()
-                if not ok:
-                    break
-
-                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-                timestamp_ms = int(frame_count * 1000 / fps)
-                result = landmarker.detect_for_video(mp_image, timestamp_ms)
-
-                candidates = _candidates_from_result(
-                    result.pose_landmarks or [], width, height)
-                chosen_idx = selector.select(candidates)
-
-                if chosen_idx is not None:
-                    _draw_skeleton(frame, candidates[chosen_idx])
-                    frames_with_pose += 1
-
-                writer.write(frame)
-                frame_count += 1
-                if progress and frame_count % 30 == 0:
-                    print(f"\r[pose_overlay] processed {frame_count} frames...",
-                          end="", flush=True)
+        frame_count, fps, width, height, frames_with_pose = _run_pose_pipeline(
+            video_path,
+            model_complexity=model_complexity,
+            num_candidate_poses=num_candidate_poses,
+            player_selector=player_selector,
+            min_pose_detection_confidence=min_pose_detection_confidence,
+            max_frames=max_frames,
+            progress=progress,
+            log_label="pose_overlay",
+            on_frame=on_frame,
+        )
     finally:
-        cap.release()
         writer.release()
-
-    if progress:
-        print(f"\r[pose_overlay] done, {frame_count} frames "
-              f"({frames_with_pose} with a detected player)          ")
-
-    if frame_count == 0:
-        raise RuntimeError(f"Video had no readable frames: {video_path}")
 
     return PoseOverlayResult(
         output_path=output_path,
@@ -311,4 +381,109 @@ def generate_pose_overlay(
         width=width,
         height=height,
         frames_with_pose=frames_with_pose,
+    )
+
+
+# ------------------------------------------------------ landmarks-only path
+@dataclasses.dataclass
+class PlayerLandmarkSequence:
+    """Per-frame landmark time series for the selected target player.
+
+    Built for M2 shot-timing work (ml/shot_timing.py), which needs the raw
+    wrist trajectory over time -- something ``generate_pose_overlay`` does
+    not expose since it only draws into a video and returns summary stats.
+
+    Attributes:
+        landmarks: (frame_count, NUM_LANDMARKS, 2) pixel-space (x, y)
+            coordinates. A frame with no selected player is all-NaN.
+        visibility: (frame_count, NUM_LANDMARKS) per-landmark visibility/
+            confidence in [0, 1]; all-zero on a frame with no selected
+            player.
+        detected: (frame_count,) bool -- whether a player was selected that
+            frame (mirrors ``PoseOverlayResult.pose_detection_rate`` but
+            per-frame instead of a single fraction).
+        fps: source video frame rate.
+        width: source video frame width in pixels.
+        height: source video frame height in pixels.
+    """
+
+    landmarks: np.ndarray
+    visibility: np.ndarray
+    detected: np.ndarray
+    fps: float
+    width: int
+    height: int
+
+    @property
+    def frame_count(self) -> int:
+        return int(self.detected.shape[0])
+
+    @property
+    def pose_detection_rate(self) -> float:
+        return float(self.detected.mean()) if self.frame_count else 0.0
+
+
+def extract_player_landmarks(
+    video_path: str | Path,
+    *,
+    model_complexity: int = 0,
+    num_candidate_poses: int = 3,
+    player_selector: Optional[PlayerSelector] = None,
+    min_pose_detection_confidence: float = 0.5,
+    max_frames: Optional[int] = None,
+    progress: bool = True,
+) -> PlayerLandmarkSequence:
+    """Extract the selected target player's per-frame landmark time series.
+
+    This reuses the same model-loading, decoding, and player-selection
+    internals as ``generate_pose_overlay`` (via ``_run_pose_pipeline``) but
+    does not draw or write an output video -- it just records landmark
+    coordinates, meant for downstream signal processing (e.g. M2's
+    wrist-speed swing-timing detector in ml/shot_timing.py) rather than
+    for a human to watch.
+
+    Args / Returns / Raises: same as ``generate_pose_overlay`` minus
+    ``output_path``; see that function's docstring.
+    """
+    video_path = Path(video_path)
+
+    landmarks: list[np.ndarray] = []
+    visibility: list[np.ndarray] = []
+    detected: list[bool] = []
+
+    def on_frame(_frame_idx, _frame, candidates, chosen_idx):
+        if chosen_idx is not None:
+            cand = candidates[chosen_idx]
+            pts = cand.landmarks
+            if pts.shape[0] < NUM_LANDMARKS:
+                padded = np.full((NUM_LANDMARKS, 2), np.nan)
+                padded[:pts.shape[0]] = pts
+                pts = padded
+            landmarks.append(pts.copy())
+            visibility.append(np.full(NUM_LANDMARKS, cand.mean_visibility))
+            detected.append(True)
+        else:
+            landmarks.append(np.full((NUM_LANDMARKS, 2), np.nan))
+            visibility.append(np.zeros(NUM_LANDMARKS))
+            detected.append(False)
+
+    frame_count, fps, width, height, _frames_with_pose = _run_pose_pipeline(
+        video_path,
+        model_complexity=model_complexity,
+        num_candidate_poses=num_candidate_poses,
+        player_selector=player_selector,
+        min_pose_detection_confidence=min_pose_detection_confidence,
+        max_frames=max_frames,
+        progress=progress,
+        log_label="extract_player_landmarks",
+        on_frame=on_frame,
+    )
+
+    return PlayerLandmarkSequence(
+        landmarks=np.stack(landmarks, axis=0),
+        visibility=np.stack(visibility, axis=0),
+        detected=np.array(detected, dtype=bool),
+        fps=fps,
+        width=width,
+        height=height,
     )
