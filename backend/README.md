@@ -9,9 +9,34 @@ implements, and §6 for milestones.
 `upload_quality.py` is the quality gate that should run right after a
 video is uploaded and *before* it's queued into the batch-processing
 pipeline (§2: offline batch, upload → background compute → output). It's a
-standalone module with no queue/API/DB wiring yet — those land when the
-upload endpoint and job queue are built, and this module's
-`check_upload_quality()` is the function they call first.
+standalone module with no batch-processing job queue / GPU scheduler
+wiring yet (that's separate, still-to-be-built backend-engineer work) —
+but it now has a thin JSON API wrapper (below): `check_upload_quality()`
+is the function that wrapper calls first.
+
+## Upload API endpoint
+
+`backend/api/upload.py` is a small FastAPI app exposing
+`POST /upload` (multipart file upload). It saves the file under
+`data/uploads/`, runs `check_upload_quality()`, and returns the
+`QualityReport` as JSON with the *exact* field names ui-ux-designer's
+`design/upload-flow.md` already documents against this module
+(`passed`, `checks[].name/status/message_zh/detail/metrics`,
+`messages_zh`) — that doc is the spec for what the frontend does with
+each field/status value; read it before changing this response shape.
+
+- `passed: true` responses also include `upload_id`, a placeholder string
+  id (`_fake_enqueue()` in `upload.py`) so the frontend has something to
+  show on the "已送出處理" screen. **This is not a real job queue** — no
+  GPU scheduler/queue exists yet — and the stub is commented as such at
+  its definition; swap it for a real enqueue call once the queue exists.
+- A malformed/unreadable file (`ValueError` from `check_upload_quality`)
+  returns HTTP 422 with a *different* JSON shape
+  (`{"error": "invalid_video_file", "detail": ...}`), not a `QualityReport`
+  — see design doc §4 on why the frontend needs to tell these apart.
+- Tests: `tests/test_upload_api.py`, using FastAPI's `TestClient` (no
+  server process needed) and the same synthetic-video fixtures as
+  `test_upload_quality.py`.
 
 ## What's real vs. placeholder
 
@@ -66,4 +91,6 @@ python3 -m pytest -q
 ```
 
 9/9 tests pass as of this writing (skips gracefully to a Chinese-language
-message if the environment lacks an mp4 encoder).
+message if the environment lacks an mp4 encoder). Plus 3 more in
+`tests/test_upload_api.py` covering the API endpoint (pass, fps FAIL,
+malformed file) — 29/29 total across the repo as of this writing.
