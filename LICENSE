@@ -1,0 +1,13 @@
+Rally AI is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0).
+
+Decision record: see docs/decisions/0001-player-detection-license.md (ADR 0001,
+decided 2026-09-30) — this project accepts AGPL-3.0 so it can use YOLOv8/Ultralytics
+for player detection without a commercial license.
+
+PLACEHOLDER: this file should be replaced with the full, verbatim AGPL-3.0 license
+text (https://www.gnu.org/licenses/agpl-3.0.txt) before any real/public release —
+a license file needs to be the exact canonical text, not a paraphrase reconstructed
+from memory. Treat this as a to-do for product-manager / legal review, not a
+finished license file.
+
+SPDX-License-Identifier: AGPL-3.0-or-later

@@ -2,6 +2,8 @@
 
 網球影片分析系統：影片輸入 → 逐拍統計（擊球數、正反拍、球速）→ 疊圖影片輸出。完整技術規劃見 [`docs/technical-plan.md`](docs/technical-plan.md)。
 
+**授權：AGPL-3.0**（見 [`LICENSE`](LICENSE)）。2026-09-30 使用者裁示接受開源，以換取可直接使用 YOLOv8/Ultralytics 做球員偵測，不需購買商業授權——決策全文見 [`docs/decisions/0001-player-detection-license.md`](docs/decisions/0001-player-detection-license.md)。目前 `LICENSE` 檔案是待補正式條文的 placeholder，正式對外發布前需换成 AGPL-3.0 的完整正式文字。
+
 這是一個獨立專案，跟同帳號下的 `tennis-form-coach`（單人 MediaPipe 評分/量測 CLI 工具）是不同的系統——規模大很多，包含球員偵測追蹤、TrackNet 球追蹤、球場 homography 校正、前端儀表板等，兩者除了同樣是網球影片分析之外，程式碼與架構不共用。
 
 ## 團隊（`.claude/agents/`）
