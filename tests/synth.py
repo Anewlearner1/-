@@ -64,6 +64,41 @@ def write_jittery_video(path: "str | Path", fps: float, n_frames: int,
     return path
 
 
+def write_slow_pan_video(path: "str | Path", fps: float, n_frames: int,
+                          width: int = 320, height: int = 240,
+                          shift_per_frame: float = 1.0, seed: int = 0) -> Path:
+    """Writes a textured video that pans smoothly and constantly in one
+    direction (e.g. a tripod on a slow fluid-head pan), as opposed to
+    `write_jittery_video`'s random frame-to-frame jumps.
+
+    QA case: `upload_quality.py`'s own module docstring admits this should
+    look "stable" per-frame (small frame-to-frame delta) and incorrectly
+    PASS `_check_camera_stability`, even though the camera is not fixed.
+    """
+    rng = np.random.default_rng(seed)
+    path = Path(path)
+    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"),
+                              fps, (width, height))
+    if not writer.isOpened():
+        raise RuntimeError("mp4 encoder unavailable in this environment")
+
+    total_shift = int(shift_per_frame * n_frames) + 4
+    canvas = (rng.integers(0, 255, (height + total_shift, width + total_shift, 3))
+              .astype(np.uint8))
+    for _ in range(60):
+        y0 = rng.integers(0, height + total_shift - 20)
+        x0 = rng.integers(0, width + total_shift - 20)
+        canvas[y0:y0 + 20, x0:x0 + 20] = rng.integers(0, 255, 3)
+
+    for i in range(n_frames):
+        off = int(round(i * shift_per_frame))
+        y0, x0 = off, off
+        frame = canvas[y0:y0 + height, x0:x0 + width]
+        writer.write(frame)
+    writer.release()
+    return path
+
+
 def write_steady_textured_video(path: "str | Path", fps: float, n_frames: int,
                                  width: int = 320, height: int = 240,
                                  seed: int = 0) -> Path:
