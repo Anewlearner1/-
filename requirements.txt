@@ -1,3 +1,5 @@
 opencv-python>=4.8
 numpy>=1.24
 pytest>=7.4
+mediapipe>=0.10.9
+scipy>=1.11.0
