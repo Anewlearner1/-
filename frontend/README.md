@@ -90,15 +90,28 @@ every `except` branch the real endpoint has today:
 | `error` code | When the API actually returns it | Traditional Chinese copy shown |
 |---|---|---|
 | `invalid_video_file` | `check_upload_quality()` raises `ValueError` (OpenCV can't open the file / not a real video container) — HTTP 422 | 檔案格式不支援，請確認為常見影片格式後重新上傳。 |
-| `file_not_found` | Defensive-only: the file the endpoint itself just wrote to disk went missing before it could be read back — HTTP 404 | 上傳過程發生問題，請重新嘗試上傳一次。 |
+| `file_not_found` | Defensive-only: the file the endpoint itself just wrote to disk went missing before it could be read back — HTTP 404 | 伺服器未能讀取您剛上傳的檔案，這通常是暫時性問題，與影片品質無關，請重新上傳一次；若持續發生請聯絡我們。 |
 | *(anything else / missing)* | Any future/unrecognized error code, or a non-200 response that isn't even `{"error": ...}`-shaped (e.g. a network failure) | 發生未預期的錯誤，請稍後再試一次；若持續發生請聯絡我們。 |
 
 All three use the §4 "problem with the file itself" visual language
 (same `.card.fail` style, ⚠ marker), which is deliberately **not** the
 §3b re-shoot screen's styling even though both use a red-ish card — the
 re-shoot screen is reserved for an actual `passed:false` `QualityReport`.
-product-manager / ui-ux-designer should review this copy; it was written
-by frontend-engineer, not designed.
+
+**Reviewed by ui-ux-designer (2026-10).** This table — and the
+authoritative version in `design/upload-flow.md` §4, which now takes
+precedence for any future error code — is the final decision, not a
+placeholder:
+- `invalid_video_file`: kept frontend-engineer's string as-is. It already
+  names the specific cause (unsupported/unreadable format) and a concrete
+  next step, consistent with the backend's `message_zh` voice.
+- `file_not_found`: rewritten. The original "上傳過程發生問題，請重新嘗試
+  上傳一次" was too close to a generic catch-all and didn't make clear
+  this is a server-side glitch unrelated to the user's footage — risking
+  confusion with the §3b re-shoot screen. New copy says explicitly this is
+  a server-side read failure, unrelated to video quality.
+- unknown/default: kept as-is. A true catch-all for an error we cannot
+  identify should stay generic rather than invent a false specific cause.
 
 ## Tests
 

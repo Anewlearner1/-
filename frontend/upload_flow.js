@@ -27,17 +27,28 @@
  *   "file_not_found" -> defensive-only branch (the file we ourselves just
  *     wrote to disk went missing before we could read it back); not
  *     expected in practice, but the API can return it, so we still need
- *     user-facing copy rather than silently failing:
- *     "上傳過程發生問題，請重新嘗試上傳一次。"
+ *     user-facing copy rather than silently failing. ui-ux-designer
+ *     reviewed this one (2026-10) and replaced the original generic
+ *     "上傳過程發生問題" string: it read too close to a vague catch-all and
+ *     didn't make clear this is a server-side glitch, not a problem with
+ *     the user's footage or file. Final copy, codified in
+ *     design/upload-flow.md §4:
+ *     "伺服器未能讀取您剛上傳的檔案，這通常是暫時性問題，與影片品質無關，
+ *      請重新上傳一次；若持續發生請聯絡我們。"
  *
  *   (default/unknown code, e.g. a future error we don't yet know about) ->
+ *     ui-ux-designer reviewed and kept frontend-engineer's string as-is
+ *     (design/upload-flow.md §4): a true catch-all for an error we cannot
+ *     describe should stay generic rather than invent a false specific
+ *     cause.
  *     "發生未預期的錯誤，請稍後再試一次；若持續發生請聯絡我們。"
  * ---------------------------------------------------------------------
  */
 
 const ERROR_COPY_ZH = {
   invalid_video_file: "檔案格式不支援，請確認為常見影片格式後重新上傳。",
-  file_not_found: "上傳過程發生問題，請重新嘗試上傳一次。",
+  file_not_found:
+    "伺服器未能讀取您剛上傳的檔案，這通常是暫時性問題，與影片品質無關，請重新上傳一次；若持續發生請聯絡我們。",
 };
 
 const DEFAULT_ERROR_COPY_ZH =
