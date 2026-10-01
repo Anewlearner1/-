@@ -1,0 +1,65 @@
+{
+  "_comment": "sha256 is null where the file was not available locally to hash. Hashes were computed from files in ~/.cache/rally-ai/pose only. Pose URLs use 'latest', so a null/stale hash may diverge from upstream.",
+  "models": [
+    {
+      "name": "mediapipe-pose-landmarker-lite",
+      "role": "pose",
+      "version": "latest (float16), as cached 2026-09-30",
+      "source_url": "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task",
+      "license": "Apache-2.0",
+      "sha256": "59929e1d1ee95287735ddd833b19cf4ac46d29bc7afddbbf6753c459690d574a",
+      "status": "in_use",
+      "notes": "Default (model_complexity 0) in cv/pose_overlay.py. Hash computed from the locally cached file; 'latest' URL is not version-pinned upstream."
+    },
+    {
+      "name": "mediapipe-pose-landmarker-full",
+      "role": "pose",
+      "version": "latest (float16)",
+      "source_url": "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task",
+      "license": "Apache-2.0",
+      "sha256": null,
+      "status": "in_use",
+      "notes": "model_complexity 1 in cv/pose_overlay.py. Not cached locally, so sha256 left null."
+    },
+    {
+      "name": "mediapipe-pose-landmarker-heavy",
+      "role": "pose",
+      "version": "latest (float16)",
+      "source_url": "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/latest/pose_landmarker_heavy.task",
+      "license": "Apache-2.0",
+      "sha256": null,
+      "status": "in_use",
+      "notes": "model_complexity 2 in cv/pose_overlay.py. Not cached locally, so sha256 left null."
+    },
+    {
+      "name": "yolov8-player-detection",
+      "role": "player-detection",
+      "version": "unselected (size/weights not chosen)",
+      "source_url": "https://github.com/ultralytics/ultralytics",
+      "license": "AGPL-3.0",
+      "sha256": null,
+      "status": "planned",
+      "notes": "Allowed per ADR 0001 (accept AGPL-3.0). Track the ultralytics package license as a dependency too. Pretrained weights license should be re-checked at adoption."
+    },
+    {
+      "name": "tracknet-family-ball-tracking",
+      "role": "ball-tracking",
+      "version": "unselected (variant/weights not chosen)",
+      "source_url": "https://github.com/pdchyy/COSC681",
+      "license": "unverified — must check before adoption",
+      "sha256": null,
+      "status": "planned",
+      "notes": "Reference implementation listed in technical-plan §8. Code and pretrained-weight/dataset licenses not checked; cannot be in_use until verified. Needs GPU per technical-plan §3."
+    },
+    {
+      "name": "openpose",
+      "role": "pose",
+      "version": "n/a",
+      "source_url": "https://github.com/CMU-Perceptual-Computing-Lab/openpose",
+      "license": "non-commercial (custom academic license)",
+      "sha256": null,
+      "status": "rejected",
+      "notes": "Rejected: non-commercial license, per technical-plan §4 ('not recommended')."
+    }
+  ]
+}
