@@ -25,11 +25,22 @@ is the function that wrapper calls first.
 `messages_zh`) — that doc is the spec for what the frontend does with
 each field/status value; read it before changing this response shape.
 
-- `passed: true` responses also include `upload_id`, a placeholder string
-  id (`_fake_enqueue()` in `upload.py`) so the frontend has something to
-  show on the "已送出處理" screen. **This is not a real job queue** — no
-  GPU scheduler/queue exists yet — and the stub is commented as such at
-  its definition; swap it for a real enqueue call once the queue exists.
+- `passed: true` responses also include `upload_id`: the id of a real
+  SQLite `uploads` row (`backend/db.py`) with status `queued`.
+  **No worker exists. Nothing consumes the queue; status never leaves
+  `queued`** (`_enqueue_upload_record()` docstring says so). Failed-gate
+  uploads create no row (the report is returned; client must re-shoot).
+- `GET /uploads/{upload_id}` -> status + stored quality report.
+- `GET /uploads/{upload_id}/shots` -> `{upload_id, shot_count, shots[]}`
+  ordered by `shot_index`; each shot has `contact_frame`, `contact_time_s`,
+  `peak_speed` (wrist speed, not ball speed), `wrist`, `fh_bh_label`,
+  `ball_speed_kmh`, `source`. `fh_bh_label` / `ball_speed_kmh` are JSON
+  `null` (= dashboard "尚未分析", never 0) until M3 / M5 exist. Nothing
+  fills `shots` in production yet; `db.insert_shots_from_result()` is for a
+  future worker (tested with `ml.shot_timing.detect_shots`).
+- Unknown id -> 404 `{"error": "upload_not_found", "detail": ...}`.
+- DB: env `RALLY_DB_PATH`, default `data/rally.sqlite3`. DB column is
+  `stroke_label`; API key is `fh_bh_label` per design/dashboard.md.
 - A malformed/unreadable file (`ValueError` from `check_upload_quality`)
   returns HTTP 422 with a *different* JSON shape
   (`{"error": "invalid_video_file", "detail": ...}`), not a `QualityReport`

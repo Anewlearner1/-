@@ -6,13 +6,11 @@ over HTTP as JSON, using the *same* field names ui-ux-designer already
 documented from `QualityReport` / `CheckResult` (`passed`, `checks[].status`,
 `checks[].message_zh`, `messages_zh`, ...) -- nothing is renamed.
 
-Scope note: there is no real batch-processing job queue / GPU scheduler
-yet (that is separate backend-engineer work, still to be built). When a
-video passes the quality gate this endpoint hands back a placeholder
-"upload_id" as an honest stub acknowledgment -- see `_fake_enqueue()` below
--- not a real queued job. Swap that out once the real job queue exists;
-no response-shape change should be needed elsewhere since the field is
-already named generically (`upload_id`, not e.g. `gpu_job_id`).
+Scope note: passed uploads get a real SQLite `uploads` row (backend/db.py)
+with status "queued" and its id as `upload_id`. There is NO worker yet, so
+status never leaves "queued". Failed-gate uploads create no row. Also:
+GET /uploads/{id} and GET /uploads/{id}/shots (404 -> {"error":
+"upload_not_found"}).
 
 Two distinct response shapes, on purpose (see design doc §4):
   1. A completed quality check (regardless of pass/fail) -> HTTP 200,
@@ -34,6 +32,7 @@ from pathlib import Path
 from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import JSONResponse
 
+from backend import db
 from backend.upload_quality import (
     CheckResult,
     QualityReport,
@@ -78,17 +77,14 @@ def _quality_report_to_dict(report: QualityReport) -> dict:
     }
 
 
-def _fake_enqueue(video_path: str) -> str:
-    """STUB ONLY -- there is no real batch-processing job queue yet.
+def _enqueue_upload_record(original_filename, stored_path: str, report: dict) -> str:
+    """Persist a passed upload as a real `uploads` row with status "queued".
 
-    The real job queue / GPU scheduler is separate, not-yet-built
-    backend-engineer work. This just mints a random id so the frontend has
-    *something* to show on the "已送出處理" screen (design doc §3a) without
-    the response pretending a queue exists. Replace the body with a real
-    enqueue call once the queue exists; keep returning a string id under
-    the same `upload_id` key so no caller-side change is needed.
+    HONEST STATUS: no worker consumes this queue yet. Nothing ever moves a
+    row out of "queued", so status stays "queued" forever until a worker
+    exists. The id is real (a DB row), the processing is not.
     """
-    return f"stub-{uuid.uuid4().hex[:12]}"
+    return db.create_upload(original_filename, stored_path, report, status="queued")
 
 
 @app.post("/upload")
@@ -131,7 +127,41 @@ async def upload_video(file: UploadFile = File(...)) -> JSONResponse:
 
     body = _quality_report_to_dict(report)
     if report.passed:
-        # Stub only -- see _fake_enqueue docstring.
-        body["upload_id"] = _fake_enqueue(report.video_path)
+        # Real DB row, but no worker consumes it -- see docstring.
+        body["upload_id"] = _enqueue_upload_record(file.filename, str(dest), body)
+    # Failed-gate uploads: NO row is created (status set has no "rejected";
+    # the report is returned to the client, who must re-shoot).
 
     return JSONResponse(status_code=200, content=body)
+
+
+def _not_found(upload_id: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=404,
+        content={"error": "upload_not_found",
+                 "detail": f"no upload with id {upload_id!r}"},
+    )
+
+
+@app.get("/uploads/{upload_id}")
+async def get_upload_status(upload_id: str) -> JSONResponse:
+    """Status + stored quality report. Status is "queued" until a worker exists."""
+    row = db.get_upload(upload_id)
+    if row is None:
+        return _not_found(upload_id)
+    return JSONResponse(status_code=200, content=row)
+
+
+@app.get("/uploads/{upload_id}/shots")
+async def get_upload_shots(upload_id: str) -> JSONResponse:
+    """Per-shot data ordered by shot_index. fh_bh_label / ball_speed_kmh are
+    JSON null when not analyzed (dashboard "尚未分析"), never 0. An existing
+    upload with no shots yet returns shot_count 0 and shots [].
+    """
+    if db.get_upload(upload_id) is None:
+        return _not_found(upload_id)
+    shots = db.list_shots(upload_id)
+    return JSONResponse(
+        status_code=200,
+        content={"upload_id": upload_id, "shot_count": len(shots), "shots": shots},
+    )
