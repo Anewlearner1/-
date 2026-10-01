@@ -7,9 +7,12 @@ already do that -- but to deliberately try to trigger the failure modes
 input-spec boundaries from technical-plan.md §5 that aren't yet covered.
 
 Each test below maps to one of the five cases in the QA brief. Case 1
-(slow pan) documents a *known, admitted* gap in upload_quality.py's
-heuristic -- see docs/qa-findings.md for the writeup addressed to
-cv-engineer/backend-engineer. It is not a new bug.
+(slow pan) originally documented a *known, admitted* gap in
+upload_quality.py's heuristic -- see docs/qa-findings.md Finding 1 for the
+writeup addressed to cv-engineer/backend-engineer. backend-engineer has
+since fixed the underlying heuristic (cumulative/directional drift
+tracking in `_estimate_camera_jitter`), so this case now asserts the
+corrected behavior instead of documenting the gap.
 """
 
 import sys
@@ -40,27 +43,29 @@ def _skip_if_no_encoder(path):
 
 
 # --------------------------------------------------------------------
-# Case 1: slow, smooth pan -- documented known-bad behavior.
+# Case 1: slow, smooth pan -- was documented known-bad behavior, now fixed.
 #
-# upload_quality.py lines ~224-227: "A tripod with a slow pan or a fluid
-# head being panned smoothly will look 'stable' per-frame ... and PASS
-# even though the camera is not fixed." This test builds a real video
-# that does exactly that and confirms the documented gap actually
-# manifests, rather than just citing the docstring. See
-# docs/qa-findings.md for the QA writeup / routing to cv-engineer and
-# backend-engineer.
+# docs/qa-findings.md Finding 1: "A tripod with a slow pan or a fluid head
+# being panned smoothly will look 'stable' per-frame ... and PASS even
+# though the camera is not fixed." backend-engineer fixed this by having
+# `_check_camera_stability` also track cumulative, directionally-consistent
+# drift (see backend/upload_quality.py). This test builds a real video that
+# does exactly what Finding 1 described and confirms it now correctly
+# FAILs.
 # --------------------------------------------------------------------
 
-def test_slow_smooth_pan_incorrectly_passes_camera_stability(tmp_path):
-    """KNOWN-BAD, DOCUMENTED BEHAVIOR (not a new bug -- see qa-findings.md).
+def test_slow_smooth_pan_now_fails_camera_stability(tmp_path):
+    """Finding 1 (docs/qa-findings.md), now fixed.
 
     A camera panning smoothly at a small constant rate (1px/frame here,
-    well under MAX_JITTER_PIXELS=4.0 per-pair) is not a fixed/tripod
-    shot, but the heuristic only looks at frame-to-frame delta, so it
-    reads as stable. This test pins down and reproduces that gap with a
-    real synthetic video so it can't silently regress into "worse" (e.g.
-    silently start flagging pans as bad some other way) without someone
-    noticing this test's assertions change.
+    well under MAX_JITTER_PIXELS=4.0 per-pair) is not a fixed/tripod shot.
+    `_check_camera_stability` used to only look at per-pair frame-to-frame
+    delta and PASS this case. It now also tracks cumulative,
+    directionally-consistent drift across the sampled sequence (see
+    `_estimate_camera_jitter` in backend/upload_quality.py), which is large
+    and one-directional for a sustained pan even though each individual
+    step is small -- so this now correctly FAILs. Renamed from
+    `test_slow_smooth_pan_incorrectly_passes_camera_stability`.
     """
     video = tmp_path / "slow_pan.mp4"
     try:
@@ -71,18 +76,19 @@ def test_slow_smooth_pan_incorrectly_passes_camera_stability(tmp_path):
 
     report = check_upload_quality(video)
 
-    # This assertion documents the CONFIRMED gap: a continuously panning
-    # camera (never actually fixed) still gets a clean PASS.
-    assert report.camera_stability.status == CheckStatus.PASS, (
-        "If this now fails, the heuristic may have been improved to catch "
-        "slow pans -- update docs/qa-findings.md accordingly, don't just "
-        "flip this assertion."
-    )
+    # Fixed behavior: a continuously panning camera (never actually fixed)
+    # is now correctly flagged, even though per-pair displacement alone
+    # still looks stable.
+    assert report.camera_stability.status == CheckStatus.FAIL
     metrics = report.camera_stability.metrics
     assert metrics["mean_displacement_px"] <= 4.0
     # Sanity: the pan is real motion (frames genuinely differ), it's just
-    # small enough per-frame to stay under threshold every step.
+    # small enough per-frame to stay under the per-pair jitter threshold.
     assert metrics["frame_pairs_analyzed"] > 0
+    # The cumulative, directionally-consistent drift is what catches it.
+    assert metrics["cumulative_drift_px"] > metrics["max_cumulative_drift_px"]
+    assert (metrics["directional_consistency"]
+            > metrics["min_pan_directional_consistency"])
 
 
 # --------------------------------------------------------------------

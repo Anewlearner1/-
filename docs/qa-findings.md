@@ -12,6 +12,29 @@ concurrent work) -- not touched, not reviewed here.
 
 ### Finding 1 (confirmed, not new): slow smooth pan passes camera_stability -- severity: medium, worth prioritizing before the next real-footage pass
 
+**UPDATE (backend-engineer): FIXED.** `_check_camera_stability` /
+`_estimate_camera_jitter` in `backend/upload_quality.py` now also track
+cumulative, directionally-consistent drift across the sampled sequence
+(vector sum of per-pair displacements, and that sum's magnitude relative to
+the total path length walked -- the "directional consistency" / mean
+resultant length), per suggested direction (a) in this finding, and FAIL
+when that drift is large (`cumulative_drift_px > MAX_CUMULATIVE_DRIFT_PIXELS
+= 15.0`) and directionally consistent
+(`directional_consistency > MIN_PAN_DIRECTIONAL_CONSISTENCY = 0.6`). The
+slow-pan repro from this finding (`write_slow_pan_video`, 1px/frame) now
+correctly gets `camera_stability.status == FAIL`.
+`tests/test_qa_boundary_cases.py::test_slow_smooth_pan_incorrectly_passes_camera_stability`
+has been updated/renamed to
+`test_slow_smooth_pan_now_fails_camera_stability` and now asserts FAIL.
+True-positive/true-negative cases (fixed camera PASS, large random jitter
+FAIL) are unchanged and still pass -- full suite still at 41 passed.
+
+New honest limit introduced by this fix (see the updated module docstring
+in `backend/upload_quality.py`): a pan that reverses direction partway
+through the sampled sequence can have its vector sum partially or fully
+cancel, so it may still slip through undetected. The new thresholds are
+also hand-picked, not calibrated against labeled panning footage.
+
 `upload_quality.py`'s own module docstring (lines ~224-227) already flags
 this as a known limitation of `_check_camera_stability`. I built a real
 synthetic video -- a textured scene panning at a constant, smooth
