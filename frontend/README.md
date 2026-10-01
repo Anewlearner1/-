@@ -91,9 +91,10 @@ every `except` branch the real endpoint has today:
 |---|---|---|
 | `invalid_video_file` | `check_upload_quality()` raises `ValueError` (OpenCV can't open the file / not a real video container) — HTTP 422 | 檔案格式不支援，請確認為常見影片格式後重新上傳。 |
 | `file_not_found` | Defensive-only: the file the endpoint itself just wrote to disk went missing before it could be read back — HTTP 404 | 伺服器未能讀取您剛上傳的檔案，這通常是暫時性問題，與影片品質無關，請重新上傳一次；若持續發生請聯絡我們。 |
+| `upload_not_found` | `GET /uploads/{id}` or `GET /uploads/{id}/shots` with an id that has no record (stale/mistyped link, or never created: failed-gate uploads create no row) — HTTP 404. **Not reachable from the current upload screen** (it only calls `POST /upload`); mapping is in place for the dashboard (M6) callers, not wired to any screen today | 找不到這筆上傳紀錄，可能是連結有誤或已失效，與影片品質無關；請回到上傳頁重新上傳影片。 |
 | *(anything else / missing)* | Any future/unrecognized error code, or a non-200 response that isn't even `{"error": ...}`-shaped (e.g. a network failure) | 發生未預期的錯誤，請稍後再試一次；若持續發生請聯絡我們。 |
 
-All three use the §4 "problem with the file itself" visual language
+All four use the §4 "problem with the file itself" visual language
 (same `.card.fail` style, ⚠ marker), which is deliberately **not** the
 §3b re-shoot screen's styling even though both use a red-ish card — the
 re-shoot screen is reserved for an actual `passed:false` `QualityReport`.
@@ -121,18 +122,18 @@ frontend actually ships (no parallel reimplementation):
 1. **`tests/test_frontend_upload_flow.js`** — Node's built-in test runner
    (`node --test tests/test_frontend_upload_flow.js`), hand-built
    fixtures shaped like the backend's documented response shapes. Fast,
-   no backend needed. 7 tests.
+   no backend needed. 8 tests.
 
 2. **`tests/test_frontend_against_backend.py`** — a pytest test (same
    `FastAPI TestClient` pattern as `tests/test_upload_api.py`) that
    drives three *real* requests through the real `/upload` endpoint
    (steady 60fps video → pass, 30fps video → FAIL, garbage bytes →
-   malformed-file error), then pipes each real `(status, body)` pair into
+   malformed-file error, plus a real `GET /uploads/<nonexistent id>` 404 against a per-test temp DB), then pipes each real `(status, body)` pair into
    `frontend/upload_flow.js`'s actual `classifyUploadResponse` via a
    Node subprocess bridge (`frontend/classify_cli.js`) and asserts the
    screen matches design doc §3a/§3b/§4. This is the test that proves the
    frontend logic and the real backend actually agree, not two specs
-   drifting independently. 3 tests. Skips gracefully if Node isn't on
+   drifting independently. 5 tests (4 functions; the new one is parametrized over both GET endpoints). Skips gracefully if Node isn't on
    `PATH`.
 
 Run everything:

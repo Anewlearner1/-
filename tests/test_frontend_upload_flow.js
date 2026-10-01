@@ -108,3 +108,14 @@ test("network-level failure (httpStatus 0, synthetic error body) -> ERROR, not a
   const result = classifyUploadResponse(0, { error: "network_error", detail: "fetch failed" });
   assert.equal(result.screen, SCREEN.ERROR);
 });
+
+test("404 upload_not_found -> ERROR screen with exactly the reviewed copy (not RESHOOT)", () => {
+  const body = { error: "upload_not_found", detail: "no upload with id 'abc'" };
+  const result = classifyUploadResponse(404, body);
+  assert.equal(result.screen, SCREEN.ERROR);
+  assert.equal(result.errorCode, "upload_not_found");
+  assert.equal(result.uploadId, null);
+  assert.deepEqual(result.messages, [
+    "找不到這筆上傳紀錄，可能是連結有誤或已失效，與影片品質無關；請回到上傳頁重新上傳影片。",
+  ]);
+});

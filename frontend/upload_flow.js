@@ -45,10 +45,20 @@
  * ---------------------------------------------------------------------
  */
 
+/**
+ * "upload_not_found" (HTTP 404, GET /uploads/{id} and
+ * GET /uploads/{id}/shots): the id asked about has no record (stale or
+ * mistyped link, or an id never created -- failed-gate uploads create no
+ * row). REACHABILITY: NOT reachable from the current upload screen, which
+ * only calls POST /upload; the mapping exists for the dashboard (M6) GET
+ * callers. Copy per design/upload-flow.md §4.1.
+ */
 const ERROR_COPY_ZH = {
   invalid_video_file: "檔案格式不支援，請確認為常見影片格式後重新上傳。",
   file_not_found:
     "伺服器未能讀取您剛上傳的檔案，這通常是暫時性問題，與影片品質無關，請重新上傳一次；若持續發生請聯絡我們。",
+  upload_not_found:
+    "找不到這筆上傳紀錄，可能是連結有誤或已失效，與影片品質無關；請回到上傳頁重新上傳影片。",
 };
 
 const DEFAULT_ERROR_COPY_ZH =

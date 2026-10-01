@@ -27,6 +27,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from backend import db  # noqa: E402
 from backend.api.upload import app  # noqa: E402
 
 sys.path.insert(0, str(REPO_ROOT / "tests"))
@@ -147,3 +148,27 @@ def test_real_malformed_file_response_routes_to_error_not_reshoot(tmp_path, clie
     # English `detail` string.
     assert result["messages"][0] != body["detail"]
     assert "檔案格式不支援" in result["messages"][0]
+
+
+@pytest.mark.parametrize("suffix", ["", "/shots"])
+def test_real_unknown_upload_id_routes_to_error_with_not_found_copy(
+    tmp_path, monkeypatch, suffix
+):
+    """Real GET /uploads/<nonexistent> (and /shots) -> 404
+    {"error": "upload_not_found"} -> error screen with the §4.1 copy.
+    Not reachable from today's upload page (it only POSTs); this proves
+    the mapping works for the real envelope for future dashboard callers.
+    """
+    _skip_if_no_node()
+    monkeypatch.setenv(db.DB_ENV_VAR, str(tmp_path / "test.sqlite3"))
+    resp = TestClient(app).get(f"/uploads/does-not-exist{suffix}")
+    assert resp.status_code == 404
+    body = resp.json()
+    assert body["error"] == "upload_not_found"
+
+    result = classify_via_frontend(resp.status_code, body)
+    assert result["screen"] == "error"
+    assert result["errorCode"] == "upload_not_found"
+    assert result["messages"][0] != body["detail"]
+    assert "找不到這筆上傳紀錄" in result["messages"][0]
+    assert "與影片品質無關" in result["messages"][0]
