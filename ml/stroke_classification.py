@@ -1,0 +1,292 @@
+"""M3: forehand / backhand classification of detected shots -- rule-based
+baseline, pose-only, 2D pixel-space.
+
+STATUS: UNVALIDATED. No real labeled footage exists (labeling/ is tooling
+only), so nothing here has been measured on real video. The synthetic
+tests (tests/test_stroke_classification.py) check the rule's *logic* only.
+Every threshold below is a starting value reasoned from the sibling
+tennis-form-coach project and docs/domain-standards.md, not a tuned or
+measured one. Do not quote any accuracy for this module.
+
+Why a rule baseline: with zero labels a learned model cannot be trained or
+validated; a transparent rule is debuggable and gives the future model a
+baseline to beat. The interface (``classify_shot`` /
+``classify_shots(..., classifier=...)`` returning ``StrokeClassification``)
+is deliberately model-agnostic so a learned classifier can replace
+``classify_shot`` unchanged for callers.
+
+Rule (domain-standards.md section 3: "which side of the body the swing
+originates from" -- NOT which wrist peaked, NOT stance angle, NOT swing
+shape/slice)
+---------------------------------------------------------------------------
+1. Racket hand: given, or inferred as the wrist with the higher *peak*
+   speed over the clip (as in the sibling's detect_handedness: peak speed,
+   not path length). ``detect_shots``' per-event ``wrist`` field is
+   deliberately NOT used -- domain-standards says a two-handed backhand can
+   make either wrist the faster one.
+2. Overhead/serve gate: racket-hand wrist well above the head (or far above
+   the hips) at contact -> "other" (thresholds copied from the sibling's
+   serve gate; the serve scope is an open product-manager question, so
+   serves are not forced into FH/BH -- interim design).
+3. Primary signal, ``takeback_lateral``: take the frame in the backswing
+   window before contact where the racket wrist is farthest from its
+   contact position (the "takeback"), and measure its position across the
+   torso: projected on the axis perpendicular to hip_mid->shoulder_mid,
+   relative to hip_mid, in torso lengths, signed positive toward the racket
+   -hand side. >= tie margin -> forehand (racket side), <= -margin ->
+   backhand (crossed body). Same idea as the sibling's ``wrist_lateral``
+   read at takeback, but 2D.
+4. Tie-breaker only: if the takeback signal is inside the margin, use the
+   sign of the same lateral measure at contact (``contact_lateral``). If
+   that is also ambiguous -> "unknown".
+
+2D limitation (state honestly): the sibling uses 3D world landmarks, so
+torso rotation (shoulder/hip yaw) is measured directly. Here landmarks are
+2D pixels, so torso rotation is NOT measured. Stand-ins used:
+  * which shoulder appears on which image side (clip median) fixes which
+    image direction is "racket side";
+  * the wrist's lateral offset from the torso midline.
+Both depend on camera angle. Behind-the-baseline / front views work best;
+if the shoulders are near edge-on (side-on camera) the racket side cannot be
+resolved and the result is "unknown". Apparent shoulder width at contact is
+recorded in the result for debugging but does NOT influence the label.
+Perspective, camera roll, and a player rotating through 90 degrees can all
+flip the sign; none of this has been tested on real footage.
+
+Missing data: landmarks that are NaN, below MIN_VISIBILITY, or on frames
+with no detected player are treated as missing; if required landmarks are
+missing the result is label "unknown" with confidence 0 -- never a guess.
+"""
+from __future__ import annotations
+
+import dataclasses
+from typing import Callable, Optional, Sequence
+
+import numpy as np
+from scipy.signal import savgol_filter
+
+from cv.pose_overlay import (
+    L_HIP, L_SHOULDER, L_WRIST, MIN_VISIBILITY, NOSE, R_HIP, R_SHOULDER,
+    R_WRIST, PlayerLandmarkSequence,
+)
+from ml.shot_timing import ShotEvent, _wrist_speed
+
+FOREHAND, BACKHAND, OTHER, UNKNOWN = "forehand", "backhand", "other", "unknown"
+LABELS = (FOREHAND, BACKHAND, OTHER)           # valid ground-truth labels
+PREDICTIONS = (FOREHAND, BACKHAND, OTHER, UNKNOWN)
+
+# --- thresholds: all UNVALIDATED starting values -------------------------
+BACK_WINDOW_S = 0.6          # backswing search window before contact
+TIE_MARGIN = 0.15            # torso lengths; |lateral| below this is ambiguous
+CONF_SATURATION = 0.6        # |lateral| (torso lengths) at which confidence = 1
+MIN_SHOULDER_SPREAD = 0.15   # shoulder separation across torso, in torso lengths
+MIN_WINDOW_FRAMES = 3        # valid backswing frames needed
+SERVE_HEAD_THRESHOLD = 0.3   # wrist above nose, torso lengths (sibling value)
+SERVE_HIP_THRESHOLD = 1.3    # wrist above hip mid, torso lengths (sibling value)
+HAND_AMBIGUOUS_RATIO = 1.15  # peak-speed ratio below which inferred hand is shaky
+
+
+@dataclasses.dataclass(frozen=True)
+class StrokeClassification:
+    """Result for one shot. ``confidence`` is a heuristic in [0, 1] derived
+    from the margin -- NOT a calibrated probability."""
+
+    label: str                       # forehand | backhand | other | unknown
+    confidence: float
+    margin: float                    # |decisive signal| (torso lengths); 0 if unknown
+    hand: str                        # "left" | "right" (racket hand used)
+    hand_source: str                 # "given" | "inferred" | "default"
+    takeback_lateral: Optional[float] = None
+    contact_lateral: Optional[float] = None
+    wrist_above_head: Optional[float] = None
+    wrist_above_hip: Optional[float] = None
+    shoulder_width_ratio: Optional[float] = None   # debug only, unused by rule
+    takeback_frame: Optional[int] = None
+    used_tiebreak: bool = False
+    reason: str = ""
+
+
+# ------------------------------------------------------------ helpers
+def _masked_landmarks(seq: PlayerLandmarkSequence) -> np.ndarray:
+    """Landmarks with NaN wherever missing: undetected frame, low visibility."""
+    lm = np.array(seq.landmarks, dtype=float)
+    bad = (np.asarray(seq.visibility) < MIN_VISIBILITY) | ~np.asarray(seq.detected)[:, None]
+    lm[bad] = np.nan
+    return lm
+
+
+def detect_racket_hand(seq: PlayerLandmarkSequence) -> tuple[Optional[str], float]:
+    """Racket hand = wrist with the higher smoothed PEAK speed over the clip.
+
+    Returns (hand, peak_ratio) where ratio = higher/lower peak (inf if the
+    other wrist never moved). hand is None when neither wrist moves (no
+    evidence). Known failure: a two-handed backhand-only clip, or a clip
+    where the off hand is faster (e.g. toss), can flip this -- hence the
+    ``hand`` override on classify_shot. Pixel speed is also camera-dependent.
+    """
+    lm = _masked_landmarks(seq)
+    n = lm.shape[0]
+    peaks = {}
+    for name, idx in (("left", L_WRIST), ("right", R_WRIST)):
+        sp = _wrist_speed(lm, idx, seq.fps)
+        sp = np.where(np.isnan(sp), 0.0, sp)
+        w = min(5, n if n % 2 == 1 else n - 1)
+        if w >= 5:
+            sp = savgol_filter(sp, window_length=w, polyorder=2)
+        peaks[name] = float(np.max(sp)) if sp.size else 0.0
+    hi, lo = max(peaks.values()), min(peaks.values())
+    if hi <= 1e-9:
+        return None, 1.0
+    hand = "right" if peaks["right"] >= peaks["left"] else "left"
+    return hand, (hi / lo if lo > 1e-9 else float("inf"))
+
+
+def _unknown(hand, hand_source, reason, **kw) -> StrokeClassification:
+    return StrokeClassification(label=UNKNOWN, confidence=0.0, margin=0.0,
+                                hand=hand, hand_source=hand_source,
+                                reason=reason, **kw)
+
+
+def _near_valid(arr: np.ndarray, c: int, radius: int = 2) -> Optional[int]:
+    """Closest frame to c (within radius) whose row is fully finite."""
+    for d in range(radius + 1):
+        for f in (c - d, c + d):
+            if 0 <= f < arr.shape[0] and np.all(np.isfinite(arr[f])):
+                return f
+    return None
+
+
+# ------------------------------------------------------------ classifier
+def classify_shot(
+    seq: PlayerLandmarkSequence,
+    event: ShotEvent,
+    hand: Optional[str] = None,
+    *,
+    _inferred: Optional[tuple[Optional[str], float]] = None,
+) -> StrokeClassification:
+    """Classify one detected shot as forehand / backhand / other / unknown.
+
+    Args:
+        seq: landmarks for the whole clip (2D pixel space).
+        event: shot from ``detect_shots``; only ``contact_frame`` is used
+            (``event.wrist`` is intentionally ignored -- see module docs).
+        hand: "left" or "right" racket hand; inferred from the clip when None.
+    """
+    if hand not in (None, "left", "right"):
+        raise ValueError(f"hand must be 'left', 'right' or None, got {hand!r}")
+
+    if hand is None:
+        inferred_hand, ratio = _inferred if _inferred is not None else detect_racket_hand(seq)
+        if inferred_hand is None:
+            hand, src, ratio = "right", "default", 1.0
+        else:
+            hand, src = inferred_hand, "inferred"
+    else:
+        src, ratio = "given", float("inf")
+
+    rw_idx = R_WRIST if hand == "right" else L_WRIST
+    lm = _masked_landmarks(seq)
+    n, c = lm.shape[0], int(event.contact_frame)
+    if not (0 <= c < n):
+        return _unknown(hand, src, f"contact_frame {c} outside clip (0..{n - 1})")
+
+    sh_l, sh_r = lm[:, L_SHOULDER], lm[:, R_SHOULDER]
+    hip_l, hip_r = lm[:, L_HIP], lm[:, R_HIP]
+    wrist, nose = lm[:, rw_idx], lm[:, NOSE]
+    sm, hm = (sh_l + sh_r) / 2, (hip_l + hip_r) / 2
+    axis = sm - hm                                   # hip -> shoulder, "up" along torso
+    torso = np.linalg.norm(axis, axis=1)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        u = np.stack([-axis[:, 1], axis[:, 0]], axis=1) / torso[:, None]   # (1,0) when upright
+        spread = np.sum((sh_r - sh_l) * u, axis=1) / torso   # right-minus-left shoulder, torso lengths
+    if not np.any(np.isfinite(spread)):
+        return _unknown(hand, src, "torso landmarks missing for whole clip")
+    med_spread = float(np.nanmedian(spread))
+    if abs(med_spread) < MIN_SHOULDER_SPREAD:
+        return _unknown(hand, src, "shoulders near edge-on to camera; racket side unresolvable "
+                        "(camera-angle limit of 2D cues)")
+    # image direction (along u) of the racket side, then sign so lateral > 0 = racket side
+    racket_sign = (1.0 if med_spread > 0 else -1.0) * (1.0 if hand == "right" else -1.0)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        lat = np.sum((wrist - hm) * u, axis=1) * racket_sign / torso
+
+    fc = _near_valid(np.concatenate([wrist, hm, torso[:, None]], axis=1), c)
+    if fc is None:
+        return _unknown(hand, src, "racket wrist/torso missing around contact")
+
+    # --- overhead / serve gate
+    hi = slice(max(0, c - 2), min(n, c + 3))
+    with np.errstate(invalid="ignore", divide="ignore"):
+        above_head_s = (nose[:, 1] - wrist[:, 1]) / torso
+        above_hip_s = (hm[:, 1] - wrist[:, 1]) / torso
+    ah = float(np.nanmax(above_head_s[hi])) if np.any(np.isfinite(above_head_s[hi])) else None
+    ahip = float(np.nanmax(above_hip_s[hi])) if np.any(np.isfinite(above_hip_s[hi])) else None
+    with np.errstate(invalid="ignore"):
+        swc = float(np.hypot(*(sh_r[fc] - sh_l[fc])) / torso[fc]) if np.all(np.isfinite(sh_r[fc] - sh_l[fc])) else None
+    common = dict(wrist_above_head=ah, wrist_above_hip=ahip, shoulder_width_ratio=swc)
+
+    ex_head = (ah - SERVE_HEAD_THRESHOLD) / 0.3 if ah is not None else -1.0
+    ex_hip = (ahip - SERVE_HIP_THRESHOLD) / 0.5 if ahip is not None else -1.0
+    if max(ex_head, ex_hip) > 0:
+        score = float(min(1.0, max(ex_head, ex_hip)))
+        return StrokeClassification(OTHER, _scale_conf(score, src, ratio), score, hand, src,
+                                    reason="overhead/serve-like: racket wrist high at contact "
+                                    "(interim 'other' class; scope pending product-manager)",
+                                    **common)
+
+    # --- takeback frame: farthest from contact position within the window
+    lo = max(0, c - int(round(BACK_WINDOW_S * seq.fps)))
+    cand = np.arange(lo, c)
+    ok = np.array([f for f in cand if np.all(np.isfinite(wrist[f])) and np.isfinite(lat[f])], dtype=int)
+    contact_lat_vals = lat[max(0, c - 1):min(n, c + 2)]
+    contact_lat = float(np.nanmedian(contact_lat_vals)) if np.any(np.isfinite(contact_lat_vals)) else None
+    if len(ok) < MIN_WINDOW_FRAMES:
+        return _unknown(hand, src, f"only {len(ok)} valid backswing frames (need {MIN_WINDOW_FRAMES})",
+                        contact_lateral=contact_lat, **common)
+    dist = np.linalg.norm(wrist[ok] - wrist[fc], axis=1)
+    tb = int(ok[int(np.argmax(dist))])
+    vals = lat[max(0, tb - 1):tb + 2]
+    tb_lat = float(np.nanmean(vals))
+
+    base = dict(takeback_lateral=tb_lat, contact_lateral=contact_lat, takeback_frame=tb, **common)
+    if abs(tb_lat) >= TIE_MARGIN:
+        label = FOREHAND if tb_lat > 0 else BACKHAND
+        return StrokeClassification(label, _scale_conf(min(1.0, abs(tb_lat) / CONF_SATURATION), src, ratio),
+                                    abs(tb_lat), hand, src, reason="takeback side of torso", **base)
+    if contact_lat is not None and abs(contact_lat) >= TIE_MARGIN:
+        label = FOREHAND if contact_lat > 0 else BACKHAND
+        conf = 0.5 * min(1.0, abs(contact_lat) / CONF_SATURATION)
+        return StrokeClassification(label, _scale_conf(conf, src, ratio), abs(contact_lat), hand, src,
+                                    used_tiebreak=True,
+                                    reason="takeback ambiguous; tie-broken by contact-frame side", **base)
+    return StrokeClassification(UNKNOWN, 0.0, max(abs(tb_lat), abs(contact_lat or 0.0)), hand, src,
+                                reason="takeback and contact both near torso midline", **base)
+
+
+def _scale_conf(conf: float, src: str, ratio: float) -> float:
+    """Halve confidence when the racket hand was inferred with weak evidence."""
+    if src == "default" or (src == "inferred" and ratio < HAND_AMBIGUOUS_RATIO):
+        conf *= 0.5
+    return float(conf)
+
+
+def classify_shots(
+    seq: PlayerLandmarkSequence,
+    events: Sequence[ShotEvent],
+    hand: Optional[str] = None,
+    classifier: Callable[..., StrokeClassification] = classify_shot,
+) -> list[StrokeClassification]:
+    """Classify every shot in a clip; result is aligned 1:1 with ``events``.
+
+    The racket hand is resolved ONCE per clip (given, else inferred from
+    whole-clip peak wrist speed) so a single clip never mixes hands.
+    ``classifier`` lets a future learned model replace the rule with the
+    same ``(seq, event, hand) -> StrokeClassification`` signature.
+    """
+    if hand is None and classifier is classify_shot:
+        inferred = detect_racket_hand(seq)
+        return [classify_shot(seq, e, None, _inferred=inferred) for e in events]
+    if hand is None:
+        h, _ = detect_racket_hand(seq)
+        hand = h or "right"
+    return [classifier(seq, e, hand) for e in events]

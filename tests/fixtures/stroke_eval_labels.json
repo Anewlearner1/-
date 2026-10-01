@@ -1,0 +1,8 @@
+{
+  "video_id": "synth_stroke_clip",
+  "fps": 30.0,
+  "contact_frames": [70, 140, 210, 280],
+  "stroke_labels": ["forehand", "backhand", "other", "backhand"],
+  "racket_hand": "right",
+  "source": "synthetic"
+}

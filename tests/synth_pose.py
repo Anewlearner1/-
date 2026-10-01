@@ -92,3 +92,104 @@ def synth_landmark_sequence(
         width=1280,
         height=720,
     )
+
+
+# ---------------------------------------------------------------------------
+# Stroke-type fixture for ml/stroke_classification.py tests.
+#
+# SYNTHETIC: encodes our own assumption about what a forehand / backhand /
+# overhead looks like in 2D (racket-side takeback vs cross-body takeback vs
+# wrist above head). It can only verify the classifier's logic matches that
+# assumption -- it says nothing about how real footage looks or how accurate
+# the classifier is on it.
+# ---------------------------------------------------------------------------
+from cv.pose_overlay import (  # noqa: E402
+    L_HIP, L_SHOULDER, NOSE, R_HIP, R_SHOULDER,
+)
+
+TORSO_LEN = 120.0
+HIP_MID = (640.0, 520.0)
+
+# (lateral offset from torso midline in torso lengths, positive = racket side;
+#  y pixel) for takeback and for the position at contact.
+STROKE_SHAPES = {
+    "forehand": {"takeback": (0.9, 500.0), "contact": (0.5, 470.0)},
+    "backhand": {"takeback": (-0.8, 500.0), "contact": (-0.4, 470.0)},
+    # overhead: wrist far above the nose (y=350) at contact; takeback lateral
+    # deliberately cross-body to prove the height gate overrides lateral side.
+    "overhead": {"takeback": (-0.6, 380.0), "contact": (0.1, 250.0)},
+}
+
+
+def synth_stroke_sequence(
+    strokes: list[tuple[int, str]],
+    *,
+    hand: str = "right",
+    facing: str = "camera",
+    n_frames: int | None = None,
+    fps: float = 30.0,
+    off_wrist_faster: bool = False,
+) -> PlayerLandmarkSequence:
+    """Landmark sequence with one stroke per ``(contact_frame, kind)``.
+
+    ``kind`` in STROKE_SHAPES. The racket wrist goes rest -> takeback (slow)
+    -> through contact (fast, speed peak exactly at contact_frame) -> follow
+    through -> rest. ``facing="camera"`` puts the player's right shoulder on
+    image-left; ``"away"`` mirrors it. ``off_wrist_faster`` makes the OFF
+    wrist also swing (a mirrored fast motion with 1.5x amplitude) so that
+    detect_shots' per-event ``wrist`` flips to the off hand while the true
+    stroke type is unchanged.
+    """
+    strokes = sorted(strokes)
+    if n_frames is None:
+        n_frames = strokes[-1][0] + 70
+    t = np.arange(n_frames, dtype=float)
+
+    # image-x direction of the racket side
+    right_dir = -1.0 if facing == "camera" else 1.0      # image dir of player's right
+    racket_dir = right_dir if hand == "right" else -right_dir
+
+    def to_px(lat_y):
+        lat, y = lat_y
+        return np.array([HIP_MID[0] + racket_dir * lat * TORSO_LEN, y])
+
+    rest = to_px((0.3, 520.0))
+    off_rest = np.array([HIP_MID[0] - racket_dir * 0.3 * TORSO_LEN, 520.0])
+
+    # per-stroke kinds can differ, so build the racket path stroke by stroke
+    racket = np.tile(rest, (n_frames, 1)).astype(float)
+    for c, kind in strokes:
+        shape = STROKE_SHAPES[kind]
+        tb, pc = to_px(shape["takeback"]), to_px(shape["contact"])
+        p_end = 2 * pc - tb
+        racket += np.outer(_ramp(t, c - 28, 11.0), tb - rest)
+        racket += np.outer(_ramp(t, c, 2.5), p_end - tb)
+        racket += np.outer(_ramp(t, c + 25, 12.0), rest - p_end)
+
+    off_path = np.tile(off_rest, (n_frames, 1)).astype(float)
+    if off_wrist_faster:
+        for c, kind in strokes:
+            shape = STROKE_SHAPES[kind]
+            # off wrist: one fast sweep (peak at contact, ~1.5x the racket
+            # wrist's amplitude) with no separate takeback, so only the true
+            # contact peak is created -- but it is the FASTER wrist.
+            d = (to_px(shape["contact"]) - to_px(shape["takeback"])) * 2 * -1.5
+            off_path += np.outer(_ramp(t, c, 2.5), d)
+            off_path += np.outer(_ramp(t, c + 25, 12.0), -d)
+
+    lm = np.zeros((n_frames, NUM_LANDMARKS, 2))
+    lm[:] = HIP_MID
+    sm = (HIP_MID[0], HIP_MID[1] - TORSO_LEN)
+    lm[:, R_SHOULDER] = (sm[0] + right_dir * 50, sm[1])
+    lm[:, L_SHOULDER] = (sm[0] - right_dir * 50, sm[1])
+    lm[:, R_HIP] = (HIP_MID[0] + right_dir * 30, HIP_MID[1])
+    lm[:, L_HIP] = (HIP_MID[0] - right_dir * 30, HIP_MID[1])
+    lm[:, NOSE] = (sm[0], sm[1] - 50)
+    r_idx, o_idx = (R_WRIST, L_WRIST) if hand == "right" else (L_WRIST, R_WRIST)
+    lm[:, r_idx] = racket
+    lm[:, o_idx] = off_path
+
+    return PlayerLandmarkSequence(
+        landmarks=lm, visibility=np.ones((n_frames, NUM_LANDMARKS)),
+        detected=np.ones(n_frames, dtype=bool), fps=fps, width=1280, height=720,
+    )
