@@ -105,3 +105,17 @@ python3 -m pytest -q
 message if the environment lacks an mp4 encoder). Plus 3 more in
 `tests/test_upload_api.py` covering the API endpoint (pass, fps FAIL,
 malformed file) — 29/29 total across the repo as of this writing.
+
+## 影片資料夾（`backend/library.py`）
+
+後端直接讀取的影片放在 `data/videos/`（可用環境變數 `RALLY_VIDEO_DIR` 改路徑）。`data/` 已列入 `.gitignore`：影片含可辨識的人物，而本專案是 AGPL 公開 repo，**影片不得 commit**。
+
+```bash
+python -m backend.library ingest 影片.mp4 [...]   # 複製進資料夾（同名不覆蓋，檔名會清成 A-Za-z0-9._-）
+python -m backend.library scan                    # 讀取資訊 + 上傳品質檢查，輸出 JSON
+python -m backend.library scan --shots            # 另跑姿態與擊球偵測（慢，首次會下載模型）
+```
+
+- `resolve_video(name)` 只接受純檔名，拒絕 `..` 與路徑分隔，供之後 API 以名稱取檔時使用。
+- 資料夾在執行環境的本機磁碟上；沙盒容器被回收就會消失，原始檔請自行保留。
+- `scan --shots` 的擊球數只是手腕速度峰值，**未經真人標註驗證**，會有偽陽性。
