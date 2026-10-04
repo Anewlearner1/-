@@ -2,3 +2,10 @@ __pycache__/
 *.pyc
 .pytest_cache/
 data/
+# Footage shows identifiable people and this repo is public: never commit videos.
+videos/
+*.mp4
+*.mov
+*.m4v
+*.avi
+*.mkv
