@@ -43,3 +43,29 @@ Stop tuning on broadcast footage. The unblocker is spec-compliant footage
 (>=60fps, tripod, behind-baseline, rally-only) with hand-confirmed contact
 frames. The detector needs a non-stroke filter (domain-standards §2) and a real
 player-selection stage before its counts mean anything.
+
+## 2026-10-04 (later): five stills from the target camera setup
+
+Source: five still frames the owner extracted from an Insta360 X5 clip
+(2576x1449, low tripod, centred behind the baseline, one target player, other
+people on distant courts). Images are NOT in the repo (identifiable people).
+
+| Test | Result |
+|---|---|
+| Full-frame MediaPipe, lite model | player found in **1 of 5** stills |
+| Full-frame MediaPipe, heavy model | player found in **1 of 5** stills |
+| Crop around the player (300 / 450 / 700 px), lite and heavy | player found in **5 of 5** stills at every crop size |
+
+- The player is only about 80x200 px in a 2576x1449 frame, which MediaPipe's
+  internal person detector misses. Cropping fixes it.
+- The crop location was picked by eye, i.e. a perfect-detector oracle. This is
+  an upper bound for the "detect player -> crop -> pose" stage in
+  `docs/technical-plan.md` §3, not evidence a real detector will localize the
+  player this well.
+- Measured only "was a pose returned". Landmark quality (wrist position
+  accuracy, which drives swing-speed peaks) was not evaluated.
+- Five stills cannot train or validate anything: no time dimension, no labels.
+  They answer detection-coverage questions only.
+
+Consequence: M1's current full-frame approach fails on this camera setup. A
+player detection + crop stage is a prerequisite, not an optimization.
