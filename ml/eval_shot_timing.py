@@ -97,11 +97,49 @@ def evaluate_detected(label: dict, detected: Sequence[int],
     return result
 
 
+def seconds_to_frames(seconds: float, fps: float) -> int:
+    """Tolerance in frames for a tolerance in seconds at this frame rate (at least 1)."""
+    return max(1, int(round(seconds * fps)))
+
+
+def evaluate_detected_seconds(label: dict, detected: Sequence[int],
+                              tolerance_s: float = 0.33) -> dict:
+    """Score one clip with the acceptance tolerance expressed in seconds (ADR 0003).
+
+    The same wall-clock tolerance covers 30 and 60 fps clips: 0.33 s is 10
+    frames at 30 fps and 20 frames at 60 fps. Offsets are reported in seconds.
+    """
+    fps = float(label["fps"])
+    tol = seconds_to_frames(tolerance_s, fps)
+    truth = label["contact_frames"]
+    matches = match_contacts(sorted(detected), truth)
+    result = {"video_id": label["video_id"], "complete_labels": label["complete"],
+              "tolerance_s": tolerance_s, "tolerance_frames": tol,
+              "n_detected": len(detected), "n_contacts": len(truth),
+              "offsets_s": [round(m["offset"] / fps, 3) if m["offset"] is not None else None
+                            for m in matches]}
+    m = match_one_to_one(sorted(detected), truth, tol)
+    tp, fp, fn = len(m["tp"]), len(m["fp"]), len(m["fn"])
+    result["hit_rate"] = round(tp / len(truth), 3) if truth else None
+    result["missed_frames"] = m["fn"]
+    if label["not_contacts"]:
+        result["known_false_positives"] = sorted(
+            int(d) for d in detected if any(abs(d - n) <= tol for n in label["not_contacts"]))
+    if label["complete"]:
+        result.update({"tp": tp, "fp": fp, "fn": fn,
+                       "precision": round(tp / (tp + fp), 3) if tp + fp else None,
+                       "recall": round(tp / (tp + fn), 3) if tp + fn else None,
+                       "false_positive_frames": m["fp"]})
+    return result
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m ml.eval_shot_timing")
     parser.add_argument("labels", nargs="+", type=Path)
     parser.add_argument("--videos-dir", type=Path, required=True)
     parser.add_argument("--hand", choices=["auto", "left", "right"], default=None)
+    parser.add_argument("--tolerance-s", type=float, default=0.33,
+                        help="match tolerance in seconds (ADR 0003 default 0.33)")
     parser.add_argument("--merge-within-s", type=float, default=None,
                         help="drop an event this soon after the previous one (see detect_shots)")
     parser.add_argument("--ball-filter", action="store_true",
@@ -125,7 +163,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             from ml.ball_filter import filter_shots_with_ball
             result, _ = filter_shots_with_ball(video, seq, result)
         found = [e.contact_frame for e in result.events]
-        results.append(evaluate_detected(label, found))
+        results.append(evaluate_detected_seconds(label, found, args.tolerance_s))
     print(json.dumps(results, indent=2))
     return 0 if results else 1
 

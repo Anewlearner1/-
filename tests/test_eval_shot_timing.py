@@ -3,8 +3,8 @@ import json
 
 import pytest
 
-from ml.eval_shot_timing import (evaluate_detected, load_label, match_contacts,
-                                 match_one_to_one, summarize)
+from ml.eval_shot_timing import (evaluate_detected, evaluate_detected_seconds, load_label,
+                                 match_contacts, match_one_to_one, seconds_to_frames, summarize)
 
 
 def test_offset_sign_negative_means_detector_fired_early():
@@ -89,3 +89,32 @@ def test_no_not_contacts_means_no_known_false_positive_field(tmp_path):
     p = tmp_path / "clip.json"
     p.write_text(json.dumps({"video_id": "clip", "fps": 30.0, "contact_frames": [60]}))
     assert "known_false_positives" not in evaluate_detected(load_label(p), [58])
+
+
+def test_the_same_seconds_tolerance_is_ten_frames_at_30fps_and_twenty_at_60():
+    assert seconds_to_frames(0.33, 30.0) == 10
+    assert seconds_to_frames(0.33, 29.97) == 10
+    assert seconds_to_frames(0.33, 60.0) == 20
+    assert seconds_to_frames(0.001, 30.0) == 1
+
+
+def _label(tmp_path, fps, contacts, complete=True):
+    p = tmp_path / "clip.json"
+    p.write_text(json.dumps({"video_id": "clip", "fps": fps, "contact_frames": contacts}))
+    (tmp_path / "clip.meta.json").write_text(json.dumps({"complete": complete}))
+    return load_label(p)
+
+
+def test_a_detection_nine_frames_off_matches_at_30fps_but_not_at_60fps(tmp_path):
+    at30 = evaluate_detected_seconds(_label(tmp_path, 30.0, [100]), [109])
+    at60 = evaluate_detected_seconds(_label(tmp_path, 60.0, [100]), [109])
+    assert at30["recall"] == 1.0 and at30["tolerance_frames"] == 10
+    assert at60["recall"] == 1.0 and at60["tolerance_frames"] == 20        # 9 frames is 0.15 s
+    far60 = evaluate_detected_seconds(_label(tmp_path, 60.0, [100]), [125])  # 25 frames = 0.42 s
+    assert far60["recall"] == 0.0 and far60["fp"] == 1
+
+
+def test_seconds_scoring_reports_offsets_in_seconds_and_withholds_precision_when_partial(tmp_path):
+    res = evaluate_detected_seconds(_label(tmp_path, 30.0, [60], complete=False), [54, 200])
+    assert res["offsets_s"] == [-0.2]
+    assert "precision" not in res and res["hit_rate"] == 1.0

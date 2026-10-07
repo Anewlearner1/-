@@ -221,3 +221,8 @@ Why off by default: the 0.5 s window was chosen by looking at these same clips
 close as 20 frames apart); the ball filter was built on two of the clips and
 held out on only one; nothing was tested on the behind-the-baseline target
 setup or on rallies. Details: `docs/real-footage-findings.md`.
+
+**Match tolerance (ADR 0003, 2026-10-07):** acceptance matching uses +/-0.33 s
+(`evaluate_detected_seconds`, CLI default `--tolerance-s 0.33`), i.e. 10 frames
+at 30 fps and 20 at 60 fps. `evaluate_detected` (frame tolerances) remains for
+sensitivity checks.
