@@ -211,3 +211,40 @@ wrist excursion is not a usable fixed filter. Not implemented. What would
 separate them is whether a ball is at the racket near the swing, i.e. a ball
 signal. Two clips with complete owner labels (7 true contacts, 15 non-contact
 detections) now exist as a small test set for that.
+
+## 2026-10-07 (ball-colour experiment, and a correction)
+
+Question: can "is there a ball-coloured blob near a wrist within +/-8 frames of
+the event" separate ball contacts from non-contacts? Method fixed before the
+first run, run once, not tuned (`ml/ball_experiment.py`): HSV hue 25-50,
+saturation >= 90, value >= 150; blob area 3-200 px; within 2 torso lengths of a
+wrist. Test set: the 19 default-mode detections on Fons (4 true, 6 false) and
+Fed 1 (3 true, 6 false) against the owner's labels.
+
+| Result | Value |
+|---|---|
+| AUC (frames-with-blob, true vs false) | 0.85 |
+| Rule ">= 1 frame with a blob": true kept | 6 of 7 |
+| same rule: false kept | 2 of 12 |
+| Before the rule: precision / recall | 0.37 / 1.00 (7 of 19 detections true) |
+| After the rule | precision 0.75, recall 0.86 (6 TP, 2 FP, 1 FN) |
+
+The rule threshold (>= 1 of {1,2,3} tried) was picked after seeing results.
+Small sample: 7 true events, 2 clips, one court colour each (blue indoor, green
+outdoor). Colour cue only: a ball-coloured racket, shirt or shoe would also
+fire, and lighting or compression could hide a ball that is there. Not tested
+on the behind-the-baseline phone footage.
+
+### CORRECTION to the "swing is not shot" erratum above
+The two false positives that fired the rule (Fed 1 frames 570 and 651) are NOT
+a racket or shirt: crops show a clear ball, at 577-578 (touching the racket tip)
+and 643-644 (in flight). The owner reported no ball at the detected frames
+570/589/651 themselves; the ball is visible 7-8 frames away. So those events may
+be real shots whose contact is offset from the detected frame, and the earlier
+claim that they were practice swings a pose-only detector could not tell from
+hits is NOT established. Their `not_contacts` entries are now marked
+`under_review` in the label meta; `known_false_positives` for 570 and 651 are
+unconfirmed, and so is the 0.44 / 0.51 provisional-precision update. Frame 589
+and 445 had no blob in the window (still consistent with no ball).
+If 570 and 651 are real shots, the rule above keeps 8 of 9 true events and 0
+false ones; this has not been confirmed.

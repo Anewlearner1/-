@@ -9,6 +9,10 @@
     589,
     651
   ],
-  "not_contacts_note": "Owner saw no ball at these frames, so they are not ball contacts (possibly practice swings, or the ball is not visible at this resolution; the owner did not say which).",
-  "notes": "Owner confirmed 132, then said 183 and 204 have a ball and the others (445, 570, 589, 651 from the assistant's list) do not. Treated as the complete list for this clip; detections at 62 and 162 were not mentioned and are assumed not to be contacts. Revert to complete=false if wrong. Frame-numbering base (0 vs 1) and the tool used were not stated."
+  "not_contacts_note": "DISPUTED for 570 and 651. The owner saw no ball at those exact frames, but a ball-coloured blob is clearly visible next to the racket at 577-578 and in flight at 643-644, i.e. within 8 frames. These may be real shots whose contact is offset from the detected frame. Waiting for the owner to re-check a window around them. Treat known_false_positives for these two as unconfirmed.",
+  "notes": "Owner confirmed 132, then said 183 and 204 have a ball and the others (445, 570, 589, 651 from the assistant's list) do not. Treated as the complete list for this clip; detections at 62 and 162 were not mentioned and are assumed not to be contacts. Revert to complete=false if wrong. Frame-numbering base (0 vs 1) and the tool used were not stated.",
+  "under_review": [
+    570,
+    651
+  ]
 }
