@@ -2,6 +2,9 @@
  * upload_flow.js — pure, DOM-free state-classification logic for the
  * upload + quality-gate flow described in design/upload-flow.md.
  *
+ * It also builds the POST /upload form body (buildUploadFormData), so the
+ * racket_hand rule is tested here rather than in DOM code.
+ *
  * This module has no DOM/fetch dependency on purpose so it can be unit
  * tested under plain Node (see tests/test_frontend_upload_flow.js and
  * tests/test_frontend_against_backend.py) without a browser.
@@ -60,10 +63,37 @@ const ERROR_COPY_ZH = {
   upload_not_found:
     "找不到這筆上傳紀錄，可能是連結有誤或已失效，與影片品質無關；請回到上傳頁重新上傳影片。",
   // "invalid_racket_hand" (HTTP 422, POST /upload with a racket_hand other
-  // than left/right). NOT reachable yet: this screen sends no racket_hand.
-  // Copy per design/upload-flow.md §4.1 (pending ui-ux-designer review).
-  invalid_racket_hand: "持拍手設定無效，請選擇「右手」或「左手」後重新上傳；這與影片品質無關。",
+  // than left/right). REACHABILITY: only if some other client sends a bad
+  // value. This screen's §1.1 picker only ever sends "left"/"right" or no
+  // field at all (see buildUploadFormData). Copy per design/upload-flow.md
+  // §4.1 (ui-ux-designer reviewed 2026-10-07: now names 不確定 too, so the
+  // copy never pushes the user into guessing a hand).
+  invalid_racket_hand:
+    "持拍手設定無效，請重新選擇「右手」、「左手」或「不確定」後再上傳；這與影片品質無關。",
 };
+
+/**
+ * Racket-hand values POST /upload accepts (backend db.RACKET_HANDS). The
+ * §1.1 picker's 不確定 option has value "" and maps to "send no field".
+ */
+const RACKET_HANDS = Object.freeze(["left", "right"]);
+
+/**
+ * buildUploadFormData(file, racketHand) -> FormData for POST /upload.
+ *
+ * Always has "file". Adds "racket_hand" only when racketHand is exactly
+ * "left" or "right"; anything else (the picker's "" for 不確定, undefined,
+ * null) sends nothing, so the backend stores "not given" and the hand is
+ * never guessed. Uses the global FormData (browser, or Node >= 18 in tests).
+ */
+function buildUploadFormData(file, racketHand) {
+  const formData = new FormData();
+  formData.append("file", file);
+  if (RACKET_HANDS.includes(racketHand)) {
+    formData.append("racket_hand", racketHand);
+  }
+  return formData;
+}
 
 const DEFAULT_ERROR_COPY_ZH =
   "發生未預期的錯誤，請稍後再試一次；若持續發生請聯絡我們。";
@@ -177,6 +207,8 @@ const api = {
   DEFAULT_ERROR_COPY_ZH,
   errorCopyForCode,
   classifyUploadResponse,
+  RACKET_HANDS,
+  buildUploadFormData,
 };
 
 // UMD-ish export: CommonJS (Node tests) or a plain browser global.

@@ -69,6 +69,15 @@
   li.msg-fail::before { content: "✕"; position: absolute; left: 0; color: var(--fail-border); }
   li.msg-error::before { content: "⚠"; position: absolute; left: 0; }
   .muted { color: var(--muted); font-size: 0.9rem; }
+  .hand-picker {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px 4px;
+    margin: 16px 0;
+  }
+  .hand-picker legend { font-weight: 600; padding: 0 4px; }
+  .hand-picker label { display: inline-block; margin-right: 18px; padding: 6px 0; cursor: pointer; }
+  .hand-picker p { margin: 6px 0; }
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -94,6 +103,15 @@
       <div class="desc">廣告、換場、暖身畫面會干擾分析，請先剪輯掉非比賽內容。</div>
     </li>
   </ul>
+
+  <!-- §1.1 racket-hand picker: optional, defaults to 不確定 (sends nothing) -->
+  <fieldset class="hand-picker" aria-describedby="racket-hand-help">
+    <legend>持拍手（選填）</legend>
+    <label><input type="radio" name="racket_hand" value="right" /> 右手</label>
+    <label><input type="radio" name="racket_hand" value="left" /> 左手</label>
+    <label><input type="radio" name="racket_hand" value="" checked /> 不確定</label>
+    <p id="racket-hand-help" class="muted">用來判斷每一拍是正手還是反手；正反手分析仍在實驗階段，結果可能不準確。</p>
+  </fieldset>
 
   <label class="btn-row">
     <button type="button" onclick="document.getElementById('file-input').click()">選擇影片上傳</button>

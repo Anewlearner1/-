@@ -9,7 +9,9 @@ plain HTML/CSS/vanilla JS, loaded straight as `<script>` tags.
 - `upload_flow.js` — pure, DOM-free state-classification logic.
   `classifyUploadResponse(httpStatus, body) -> {screen, messages, uploadId, errorCode}`.
   No fetch, no DOM — this is what's unit tested (see Tests below). Also
-  where the error-code -> Traditional Chinese copy mapping lives.
+  where the error-code -> Traditional Chinese copy mapping lives, and
+  `buildUploadFormData(file, racketHand)`, which builds the `POST /upload`
+  body (adds `racket_hand` only for `"left"`/`"right"`).
 - `upload.js` — DOM wiring: file input → `fetch('/upload')` → feeds the
   response into `classifyUploadResponse` → shows/hides the matching
   `<section>` in `upload.html` and renders `messages_zh` / error copy.
@@ -53,6 +55,14 @@ its logic layer (see Tests).
   instruction not to touch the camera_stability disclaimer text).
 - The pre-upload guidance checklist (§1) text, taken directly from the
   design doc.
+- The racket-hand picker (§1.1): a `<fieldset>`/`<legend>` of three native
+  radios, 右手 (`right`) / 左手 (`left`) / 不確定 (`""`, checked by
+  default), above the upload button. 不確定 sends no `racket_hand` field,
+  so the backend stores "not given" and forehand/backhand stays unanalysed
+  rather than guessed. The choice is kept when the user goes back to
+  re-upload. Unit tested via `buildUploadFormData`, and each value is
+  posted to the real endpoint in the Python test; the radios themselves
+  have not been tried in a browser (none here).
 
 **Stubbed / not implemented:**
 - `passed=true` with an **empty** `messages_zh` (straight to "已送出處理"
@@ -92,7 +102,7 @@ every `except` branch the real endpoint has today:
 | `invalid_video_file` | `check_upload_quality()` raises `ValueError` (OpenCV can't open the file / not a real video container) — HTTP 422 | 檔案格式不支援，請確認為常見影片格式後重新上傳。 |
 | `file_not_found` | Defensive-only: the file the endpoint itself just wrote to disk went missing before it could be read back — HTTP 404 | 伺服器未能讀取您剛上傳的檔案，這通常是暫時性問題，與影片品質無關，請重新上傳一次；若持續發生請聯絡我們。 |
 | `upload_not_found` | `GET /uploads/{id}` or `GET /uploads/{id}/shots` with an id that has no record (stale/mistyped link, or never created: failed-gate uploads create no row) — HTTP 404. **Not reachable from the current upload screen** (it only calls `POST /upload`); mapping is in place for the dashboard (M6) callers, not wired to any screen today | 找不到這筆上傳紀錄，可能是連結有誤或已失效，與影片品質無關；請回到上傳頁重新上傳影片。 |
-| `invalid_racket_hand` | `POST /upload` optional form field `racket_hand` is not `left`/`right` (empty = not given) — HTTP 422, file not stored. **Not reachable from the current upload screen** (it sends no racket_hand; no selector yet) | 持拍手設定無效，請選擇「右手」或「左手」後重新上傳；這與影片品質無關。 |
+| `invalid_racket_hand` | `POST /upload` optional form field `racket_hand` is not `left`/`right` (empty = not given) — HTTP 422, file not stored. **Reachable only if some other client sends a bad value**: the upload screen's racket-hand picker sends only `right`/`left`, or no field for 不確定 (`buildUploadFormData`) | 持拍手設定無效，請重新選擇「右手」、「左手」或「不確定」後再上傳；這與影片品質無關。 |
 | *(anything else / missing)* | Any future/unrecognized error code, or a non-200 response that isn't even `{"error": ...}`-shaped (e.g. a network failure) | 發生未預期的錯誤，請稍後再試一次；若持續發生請聯絡我們。 |
 
 All five use the §4 "problem with the file itself" visual language
@@ -122,8 +132,9 @@ frontend actually ships (no parallel reimplementation):
 
 1. **`tests/test_frontend_upload_flow.js`** — Node's built-in test runner
    (`node --test tests/test_frontend_upload_flow.js`), hand-built
-   fixtures shaped like the backend's documented response shapes. Fast,
-   no backend needed. 8 tests.
+   fixtures shaped like the backend's documented response shapes, plus
+   `buildUploadFormData`'s racket_hand rule. Fast, no backend needed.
+   11 tests.
 
 2. **`tests/test_frontend_against_backend.py`** — a pytest test (same
    `FastAPI TestClient` pattern as `tests/test_upload_api.py`) that
@@ -134,7 +145,10 @@ frontend actually ships (no parallel reimplementation):
    Node subprocess bridge (`frontend/classify_cli.js`) and asserts the
    screen matches design doc §3a/§3b/§4. This is the test that proves the
    frontend logic and the real backend actually agree, not two specs
-   drifting independently. 5 tests (4 functions; the new one is parametrized over both GET endpoints). Skips gracefully if Node isn't on
+   drifting independently. Also posts each racket-hand picker value, as
+   built by the real `buildUploadFormData`, to the real `/upload` and
+   checks it is accepted and stored (不確定 -> null). 8 tests (5
+   functions, two parametrized). Skips gracefully if Node isn't on
    `PATH`.
 
 Run everything:

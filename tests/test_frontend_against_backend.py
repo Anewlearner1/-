@@ -172,3 +172,53 @@ def test_real_unknown_upload_id_routes_to_error_with_not_found_copy(
     assert result["messages"][0] != body["detail"]
     assert "找不到這筆上傳紀錄" in result["messages"][0]
     assert "與影片品質無關" in result["messages"][0]
+
+
+# Runs the real frontend buildUploadFormData() and prints its non-file
+# fields, so the test below posts exactly what upload.js would send.
+_FORM_FIELDS_JS = """
+const { buildUploadFormData } = require(process.argv[1]);
+const fd = buildUploadFormData(new Blob(["x"]), JSON.parse(process.argv[2]));
+const out = {};
+for (const [k, v] of fd.entries()) if (k !== "file") out[k] = v;
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+def frontend_form_fields(racket_hand_choice: str) -> dict:
+    proc = subprocess.run(
+        [NODE, "-e", _FORM_FIELDS_JS, str(REPO_ROOT / "frontend" / "upload_flow.js"),
+         json.dumps(racket_hand_choice)],
+        capture_output=True, text=True, timeout=10,
+    )
+    assert proc.returncode == 0, f"buildUploadFormData failed: {proc.stderr}"
+    return json.loads(proc.stdout)
+
+
+@pytest.mark.parametrize("choice,stored", [("right", "right"), ("left", "left"), ("", None)])
+def test_real_endpoint_accepts_the_racket_hand_the_frontend_sends(
+    tmp_path, client, monkeypatch, choice, stored
+):
+    """Each §1.1 picker value (右手 "right", 左手 "left", 不確定 "") goes
+    through the real buildUploadFormData, then the real POST /upload: never
+    a 422 invalid_racket_hand, and the stored racket_hand matches (不確定 ->
+    null, i.e. not given).
+    """
+    _skip_if_no_node()
+    monkeypatch.setenv(db.DB_ENV_VAR, str(tmp_path / "test.sqlite3"))
+    fields = frontend_form_fields(choice)
+    assert fields == ({} if stored is None else {"racket_hand": stored})
+
+    video = tmp_path / "good.mp4"
+    try:
+        write_steady_textured_video(video, fps=60, n_frames=90)
+    except RuntimeError:
+        pytest.skip("此環境缺少 mp4 編碼器")
+    _skip_if_no_encoder(video)
+
+    with open(video, "rb") as f:
+        resp = client.post("/upload", files={"file": ("good.mp4", f, "video/mp4")},
+                           data=fields)
+    assert resp.status_code == 200, resp.json()
+    assert classify_via_frontend(resp.status_code, resp.json())["screen"] == "info_confirm"
+    assert db.get_upload(resp.json()["upload_id"])["racket_hand"] == stored

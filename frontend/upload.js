@@ -1,7 +1,9 @@
 /**
  * upload.js — DOM wiring for upload.html. All screen-selection logic lives
  * in upload_flow.js (classifyUploadResponse); this file only:
- *   - talks to POST /upload via fetch (multipart/form-data, field "file")
+ *   - talks to POST /upload via fetch (multipart/form-data, field "file",
+ *     plus "racket_hand" only when 右手/左手 is picked; body built by
+ *     upload_flow.js buildUploadFormData)
  *   - shows/hides the screen <section>s based on what that function
  *     returns
  *   - renders messages_zh / error copy into the DOM
@@ -14,6 +16,7 @@
 
   var SCREEN = window.UploadFlow.SCREEN;
   var classifyUploadResponse = window.UploadFlow.classifyUploadResponse;
+  var buildUploadFormData = window.UploadFlow.buildUploadFormData;
 
   // Backend base URL. Left overridable via a global so this can be pointed
   // at a real running `uvicorn backend.api.upload:app` instance; see
@@ -106,8 +109,12 @@
   async function uploadFile(file) {
     showScreen("loading");
 
-    var formData = new FormData();
-    formData.append("file", file);
+    // §1.1 racket-hand picker: the checked radio's value is "right", "left"
+    // or "" (不確定, the default). buildUploadFormData sends no field for "".
+    var checkedHand = document.querySelector(
+      'input[name="racket_hand"]:checked'
+    );
+    var formData = buildUploadFormData(file, checkedHand ? checkedHand.value : "");
 
     var httpStatus;
     var body;

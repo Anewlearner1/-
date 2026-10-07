@@ -9,7 +9,12 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
 
-const { SCREEN, classifyUploadResponse, errorCopyForCode } = require(
+const {
+  SCREEN,
+  classifyUploadResponse,
+  errorCopyForCode,
+  buildUploadFormData,
+} = require(
   path.join(__dirname, "..", "frontend", "upload_flow.js")
 );
 
@@ -118,4 +123,33 @@ test("404 upload_not_found -> ERROR screen with exactly the reviewed copy (not R
   assert.deepEqual(result.messages, [
     "找不到這筆上傳紀錄，可能是連結有誤或已失效，與影片品質無關；請回到上傳頁重新上傳影片。",
   ]);
+});
+
+// §1.1 racket-hand picker -> POST /upload form body. The picker's values
+// are "right", "left" and "" (不確定, the default).
+const fakeFile = new Blob(["not really a video"], { type: "video/mp4" });
+
+test("racket hand: default 不確定 (\"\") or no choice sends no racket_hand field", () => {
+  for (const choice of ["", undefined, null]) {
+    const fd = buildUploadFormData(fakeFile, choice);
+    assert.equal(fd.has("file"), true);
+    assert.equal(fd.has("racket_hand"), false, `choice=${choice}`);
+  }
+});
+
+test("racket hand: choosing 右手 / 左手 sends racket_hand=right / left", () => {
+  for (const choice of ["right", "left"]) {
+    const fd = buildUploadFormData(fakeFile, choice);
+    assert.deepEqual(fd.getAll("racket_hand"), [choice]);
+    assert.equal(fd.has("file"), true);
+  }
+});
+
+test("invalid_racket_hand -> ERROR screen with copy that offers 不確定 too", () => {
+  const body = { error: "invalid_racket_hand", detail: "racket_hand must be one of ..." };
+  const result = classifyUploadResponse(422, body);
+  assert.equal(result.screen, SCREEN.ERROR);
+  assert.equal(result.errorCode, "invalid_racket_hand");
+  assert.match(result.messages[0], /不確定/);
+  assert.match(result.messages[0], /與影片品質無關/);
 });
