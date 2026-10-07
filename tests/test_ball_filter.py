@@ -63,3 +63,14 @@ def test_min_ball_frames_must_be_positive(video):
     seq = PlayerLandmarkSequence(lm, np.ones((N, NUM_LANDMARKS)), np.ones(N, bool), FPS, W, H)
     with pytest.raises(ValueError):
         filter_shots_with_ball(video, seq, _result([10]), min_ball_frames=0)
+
+
+def test_default_window_is_fps_scaled_and_unchanged_at_30fps(monkeypatch):
+    from ml import ball_filter as bf
+    seen = []
+    monkeypatch.setattr(bf, "ball_frames_near_wrists",
+                        lambda video, lm, frame, window: seen.append(window) or 1)
+    for fps in (29.97, 30.0, 60.0, 120.0):
+        seq = type("S", (), {"fps": fps, "landmarks": None})()
+        bf.filter_shots_with_ball("v.mp4", seq, _result([10]))
+    assert seen == [8, 8, 16, 32]

@@ -26,7 +26,10 @@ HSV_LO = (25, 90, 150)      # tennis-ball yellow-green: hue, saturation, value
 HSV_HI = (50, 255, 255)
 AREA_MIN, AREA_MAX = 3, 200  # px at the source resolution (clips were 360-854 wide)
 RADIUS_TORSO = 2.0           # blob must lie within this many torso lengths of a wrist
-WINDOW = 8                   # frames either side of the detected event
+WINDOW = 8                   # frames either side of the detected event (30 fps)
+# filter_shots_with_ball scales the window by fps so 60 fps clips search the
+# same +/-0.27 s; at 29.97/30 fps this is exactly the 8 frames that were measured.
+WINDOW_S = WINDOW / 30.0
 
 
 def find_ball_blob(frame_bgr: np.ndarray, wrists: Sequence[Sequence[float]],
@@ -67,7 +70,7 @@ def ball_frames_near_wrists(video: Path, landmarks: np.ndarray, event_frame: int
 
 
 def filter_shots_with_ball(video: Path, seq, result, *, min_ball_frames: int = 1,
-                           window: int = WINDOW):
+                           window: Optional[int] = None):
     """Return ``(filtered_result, counts)``; ``counts`` maps event frame -> ball frames.
 
     ``seq`` is the ``PlayerLandmarkSequence`` the events were detected on and
@@ -76,6 +79,8 @@ def filter_shots_with_ball(video: Path, seq, result, *, min_ball_frames: int = 1
     """
     if min_ball_frames < 1:
         raise ValueError("min_ball_frames must be at least 1")
+    if window is None:
+        window = max(1, int(round(WINDOW_S * seq.fps)))
     counts = {e.contact_frame: ball_frames_near_wrists(Path(video), seq.landmarks,
                                                        e.contact_frame, window)
               for e in result.events}

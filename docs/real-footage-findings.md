@@ -740,3 +740,13 @@ Pose-only detections on all 7 clips were split into true positives (within 0.33 
 No JS errors.
 
 The input was the Fons clip made into "60 fps" by writing every frame twice, only to pass the 60 fps gate. It gave 3 shots (2 forehands, 1 backhand) instead of the 4 the 30 fps original gives: the 5.37 s hit was lost. Duplicated frames make the wrist speed alternate between zero and double, which a real 60 fps recording does not do. So this says nothing about real 60 fps accuracy, but it does show that detection is sensitive to frame timing. **Real 60 fps footage is still untested.**
+
+Follow-up, fps audit (ahead of 60 fps footage):
+- The ball filter's ±8-frame window is now ±0.27 s, scaled by fps. At 29.97 and 30 fps it is still exactly 8 frames, so every number above is unchanged.
+- `detect_shots` was already in seconds.
+- These small constants are still in frames, and at 60 fps they cover half the time:
+  - the serve-gate window (±2 frames);
+  - the `_near_valid` radius (2);
+  - `MIN_WINDOW_FRAMES` (3);
+  - the hand-inference smoothing (5).
+- They are left as they are until 60 fps footage shows whether they matter.
