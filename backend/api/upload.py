@@ -7,8 +7,10 @@ documented from `QualityReport` / `CheckResult` (`passed`, `checks[].status`,
 `checks[].message_zh`, `messages_zh`, ...) -- nothing is renamed.
 
 Scope note: passed uploads get a real SQLite `uploads` row (backend/db.py)
-with status "queued" and its id as `upload_id`. There is NO worker yet, so
-status never leaves "queued". Failed-gate uploads create no row. Also:
+with status "queued" and its id as `upload_id`. A separate process,
+`python -m backend.worker`, moves rows to processing/done/failed and fills the
+shots; this API does not start it, so with no worker running a row stays
+"queued". Failed-gate uploads create no row. Also:
 GET /uploads/{id} and GET /uploads/{id}/shots (404 -> {"error":
 "upload_not_found"}).
 
@@ -80,9 +82,8 @@ def _quality_report_to_dict(report: QualityReport) -> dict:
 def _enqueue_upload_record(original_filename, stored_path: str, report: dict) -> str:
     """Persist a passed upload as a real `uploads` row with status "queued".
 
-    HONEST STATUS: no worker consumes this queue yet. Nothing ever moves a
-    row out of "queued", so status stays "queued" forever until a worker
-    exists. The id is real (a DB row), the processing is not.
+    The row is real. Processing happens only if `python -m backend.worker` is
+    running (this API does not start it); otherwise the status stays "queued".
     """
     return db.create_upload(original_filename, stored_path, report, status="queued")
 

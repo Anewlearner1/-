@@ -27,8 +27,8 @@ each field/status value; read it before changing this response shape.
 
 - `passed: true` responses also include `upload_id`: the id of a real
   SQLite `uploads` row (`backend/db.py`) with status `queued`.
-  **No worker exists. Nothing consumes the queue; status never leaves
-  `queued`** (`_enqueue_upload_record()` docstring says so). Failed-gate
+  **The queue is consumed only by `python -m backend.worker`, which nothing
+  starts automatically; with no worker running, status stays `queued`.** Failed-gate
   uploads create no row (the report is returned; client must re-shoot).
 - `GET /uploads/{upload_id}` -> status + stored quality report.
 - `GET /uploads/{upload_id}/shots` -> `{upload_id, shot_count, shots[]}`
@@ -119,3 +119,22 @@ python -m backend.library scan --shots            # 另跑姿態與擊球偵測�
 - `resolve_video(name)` 只接受純檔名，拒絕 `..` 與路徑分隔，供之後 API 以名稱取檔時使用。
 - 資料夾在執行環境的本機磁碟上；沙盒容器被回收就會消失，原始檔請自行保留。
 - `scan --shots` 的擊球數只是手腕速度峰值，**未經真人標註驗證**，會有偽陽性。
+
+
+## Worker (`backend/worker.py`)
+
+```bash
+python -m backend.worker --once                 # process everything queued, then exit
+python -m backend.worker                        # poll every 2 s until Ctrl-C
+python -m backend.worker --ball-filter --merge-within-s 0.5
+python -m backend.worker --requeue-processing   # after a crash, if no other worker is running
+```
+
+Claims the oldest `queued` upload atomically (`BEGIN IMMEDIATE`), sets `processing`, runs
+`cv.pose_overlay.extract_player_landmarks` + `ml.shot_timing.detect_shots` (optionally the
+ball filter and duplicate merge), replaces that upload's `shots`, sets `done`; any exception
+sets `failed` and stores the message in `uploads.error` (returned by `GET /uploads/{id}` as
+`error`). Not done: forehand/backhand labels (`fh_bh_label` stays null; the classifier has no
+real validation), ball speed, retries, GPU routing, scheduling, billing. Run on a real video
+(Fons practice, queued directly past the 60 fps gate): `done`, 8 shots with merge 0.5 s, in
+the order and frames of the earlier standalone run.

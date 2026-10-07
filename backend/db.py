@@ -1,9 +1,10 @@
 """Minimal SQLite persistence for uploads and per-shot data (stdlib only).
 
-Honest status: this is storage only. There is NO worker/queue consumer in
-this repo yet, so an upload row stays at status "queued" forever, and the
-`shots` table is only filled by `insert_shots_from_result()`, which nothing
-calls in production yet (a future worker is expected to).
+Status: storage plus a minimal queue. `backend/worker.py` claims "queued"
+uploads, runs pose + shot detection and fills `shots` via
+`insert_shots_from_result()`. Nothing runs that worker automatically: it must
+be started (`python -m backend.worker`), and with no worker running an upload
+stays "queued". There is no retry, scheduling, GPU routing or billing.
 
 NULL semantics: `stroke_label` (FH/BH, M3) and `ball_speed_kmh` (M5) are
 nullable. NULL means "not analyzed yet" -> the dashboard's "尚未分析" state
@@ -35,7 +36,8 @@ CREATE TABLE IF NOT EXISTS uploads (
     stored_path TEXT NOT NULL,
     created_at TEXT NOT NULL,
     status TEXT NOT NULL CHECK (status IN ('queued','processing','done','failed')),
-    quality_report_json TEXT NOT NULL
+    quality_report_json TEXT NOT NULL,
+    error TEXT                         -- why status is 'failed'; NULL otherwise
 );
 CREATE TABLE IF NOT EXISTS shots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -64,6 +66,9 @@ def connect() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(SCHEMA)
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(uploads)")}
+    if "error" not in cols:                       # databases created before this column existed
+        conn.execute("ALTER TABLE uploads ADD COLUMN error TEXT")
     return conn
 
 
@@ -94,14 +99,58 @@ def get_upload(upload_id: str) -> Optional[dict]:
         "created_at": row["created_at"],
         "status": row["status"],
         "quality_report": json.loads(row["quality_report_json"]),
+        "error": row["error"],
     }
 
 
-def set_upload_status(upload_id: str, status: str) -> None:
+def set_upload_status(upload_id: str, status: str, error: Optional[str] = None) -> None:
     if status not in UPLOAD_STATUSES:
         raise ValueError(f"invalid status {status!r}")
     with closing(connect()) as conn, conn:
-        conn.execute("UPDATE uploads SET status = ? WHERE id = ?", (status, upload_id))
+        conn.execute("UPDATE uploads SET status = ?, error = ? WHERE id = ?",
+                     (status, error, upload_id))
+
+
+def claim_next_queued() -> Optional[dict]:
+    """Atomically move the oldest "queued" upload to "processing" and return it.
+
+    BEGIN IMMEDIATE takes the write lock first, so two workers cannot claim
+    the same row. Returns None when nothing is queued.
+    """
+    conn = connect()
+    conn.isolation_level = None
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT id FROM uploads WHERE status = 'queued' "
+                           "ORDER BY created_at, rowid LIMIT 1").fetchone()
+        if row is None:
+            conn.execute("COMMIT")
+            return None
+        conn.execute("UPDATE uploads SET status = 'processing', error = NULL WHERE id = ?",
+                     (row["id"],))
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    finally:
+        conn.close()
+    return get_upload(row["id"])
+
+
+def requeue_processing() -> int:
+    """Put every "processing" upload back to "queued" (recover from a crashed worker).
+
+    Only safe when no worker is running; the caller decides that.
+    """
+    with closing(connect()) as conn, conn:
+        return conn.execute("UPDATE uploads SET status = 'queued' "
+                            "WHERE status = 'processing'").rowcount
+
+
+def stored_path(upload_id: str) -> Optional[str]:
+    with closing(connect()) as conn:
+        row = conn.execute("SELECT stored_path FROM uploads WHERE id = ?", (upload_id,)).fetchone()
+    return None if row is None else row["stored_path"]
 
 
 def insert_shots_from_result(upload_id: str, result: Any,
