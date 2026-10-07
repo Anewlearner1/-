@@ -714,3 +714,17 @@ Review fixes (same day):
 - **Reproduce:** `python -m ml.eval_stroke_classification labeling/labels/*.json --videos-dir data/videos --loco-3d`, with `racket_hand` set in the labels. The cached landmark files are not in the repo, so `--videos-dir` re-extracts them. This gives 43/46 with fold thresholds of 0.277–0.325 m.
 - The normal report now says how many clips had world landmarks. A cache from before world landmarks existed silently fell back to the 0.61 2D rules.
 - **Detected mode** (each labeled hit matched to the nearest pose detection within ±10 frames, i.e. 0.33 s at 30 fps; threshold 0.28 m, in-sample): 43/46 = 0.93, with no hit missed. False-positive detections are not scored here; that is M2's precision.
+
+## 2026-10-07: 3D features for M2 false positives: no gain
+
+Pose-only detections on all 7 clips were split into true positives (within 0.33 s of a hit; 49, including duplicates near a hit) and false positives (a `not_contacts` frame, or anything unmatched on a complete clip; 20). The table shows how well each feature separates them (AUC: true positives scoring higher than false positives):
+
+| feature | AUC |
+|---|---|
+| pixel wrist speed (current) | 0.61 |
+| 3D wrist speed relative to the hips, m/s | 0.64 |
+| 3D wrist reach from the hips | 0.75 |
+
+- 3D speeds are noisy. Some reach 40–54 m/s, which is not physically plausible for a wrist, because monocular depth jitters frame to frame.
+- Most false positives are follow-throughs and takebacks of real strokes, which are just as fast as the hit.
+- **Not pursued.** The ball-colour filter stays the M2 tool. The decision on making it the default waits for spec-compliant footage.
