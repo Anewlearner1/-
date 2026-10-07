@@ -49,14 +49,14 @@ def test_label_missing_a_required_key_is_rejected(tmp_path):
         load_label(p)
 
 
-def test_committed_federer_labels_are_partial_and_fons_is_complete():
+def test_committed_labels_completeness_flags():
     from pathlib import Path
     labels = {p.name: load_label(p) for p in sorted(Path("labeling/labels").glob("*.json"))
               if not p.name.endswith(".meta.json")}
     assert len(labels) == 3
     for name, lab in labels.items():
         assert lab["contact_frames"]
-        assert lab["complete"] is name.startswith("1436d55e")
+        assert lab["complete"] is name.startswith(("1436d55e", "a7d5518f"))
 
 
 def test_a_duplicate_detection_of_one_stroke_is_a_false_positive():

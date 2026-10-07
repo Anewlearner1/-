@@ -184,3 +184,30 @@ three as real strokes from arm motion alone.
   (570, 589, 651); `hand="auto"` 1 of 7 (589). Reported by
   `ml.eval_shot_timing` as `known_false_positives`, a lower bound on false
   positives while the contact list is partial.
+
+## 2026-10-07 (held-out test): wrist excursion does not transfer between clips
+
+Fed 1 label completed by the owner: contacts 132, 183, 204 have a ball; 445, 570,
+589, 651 do not; detections at 62 and 162 not mentioned and assumed not contacts
+(complete-list inference, see the label's meta).
+
+| Mode | TP | FP | FN | precision | recall |
+|---|---|---|---|---|---|
+| default | 3 | 6 | 0 | 0.33 | 1.00 |
+| `hand="auto"` | 3 | 4 | 0 | 0.43 | 1.00 |
+
+Held-out check of the wrist-excursion idea (threshold chosen on Fons, applied
+to Fed 1):
+- Rank order still separates (AUC 1.00, 3 true vs 6 false), but only barely:
+  lowest true contact 2.47, highest false event 2.46.
+- The Fons-derived threshold of 1.85 keeps 3/3 true contacts AND 5/6 false
+  events. Absolute values differ between clips (Fons: false <= 1.81, true >=
+  1.90; Fed 1: false <= 2.46, true >= 2.47), so there is no transferable cutoff.
+- The false events with large excursion are mostly the owner's no-ball swings
+  (589: 2.46, 445: 2.41, 570: 2.08), which are real full swings.
+
+Conclusion: a pose-only filter cannot separate shots from practice swings, and
+wrist excursion is not a usable fixed filter. Not implemented. What would
+separate them is whether a ball is at the racket near the swing, i.e. a ball
+signal. Two clips with complete owner labels (7 true contacts, 15 non-contact
+detections) now exist as a small test set for that.
