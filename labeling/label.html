@@ -24,7 +24,8 @@
   .badge.done { background:#d9f2e1; color:var(--ok); }
   .badge.old { background:var(--warn-bg); color:var(--warn-fg); }
   #player-wrap { position:relative; background:#000; border-radius:6px; overflow:hidden; }
-  video { display:block; width:100%; max-height:70vh; background:#000; }
+  video, #frame-img { display:block; width:100%; max-height:70vh; background:#000; object-fit:contain; }
+  [hidden] { display:none !important; }
   #frame-display { font-size:34px; font-weight:700; margin:8px 0 2px; font-variant-numeric: tabular-nums; }
   #frame-sub { color:var(--muted); font-size:13px; }
   .warn { background:var(--warn-bg); color:var(--warn-fg); padding:6px 10px; border-radius:6px; margin:6px 0; }
@@ -54,7 +55,7 @@
     <h2 id="h-player">播放</h2>
     <p id="no-video" class="help">請從左邊選一支影片。</p>
     <div id="player" hidden>
-      <div id="player-wrap"><video id="video" muted playsinline preload="auto"></video></div>
+      <div id="player-wrap"><video id="video" muted playsinline preload="auto"></video><img id="frame-img" alt="目前這一幀" hidden></div>
       <div id="frame-display" aria-live="polite">解碼器幀 #<span id="frame-num">—</span></div>
       <div id="frame-sub"></div>
       <div id="barcode-warning" class="warn" hidden>讀不到畫面上的幀號條碼，現在顯示的幀號不可信。請暫停或按 ←/→ 再試；不要在此時標記。</div>

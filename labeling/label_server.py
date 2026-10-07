@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Literal, Optional
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import Response, FileResponse
 from pydantic import BaseModel
 
 from backend import library
@@ -121,8 +121,24 @@ def video_info(name: str):
 
 @app.get("/api/videos/{name}/proxy")
 def video_proxy(name: str):
-    webm, _ = proxy.cached_proxy(_resolve(name))
+    webm, info = proxy.cached_proxy(_resolve(name))
+    if info.get("mode") == "frames":
+        raise HTTPException(409, "this proxy is frame-by-frame; use /frame/{n}")
     return FileResponse(webm, media_type="video/webm")
+
+
+@app.get("/api/videos/{name}/frame/{n}")
+def video_frame(name: str, n: int):
+    """One decoder frame as JPEG (barcode included) -- the fallback display path
+    when VP8 is unavailable; works for either proxy mode."""
+    import cv2
+    path, info = proxy.cached_proxy(_resolve(name))
+    if not 0 <= n < info["frame_count"]:
+        raise HTTPException(404, f"frame out of range 0..{info['frame_count'] - 1}")
+    ok, buf = cv2.imencode(".jpg", proxy.read_proxy_frame(path, n), [cv2.IMWRITE_JPEG_QUALITY, 92])
+    if not ok:
+        raise HTTPException(500, "could not encode frame")
+    return Response(buf.tobytes(), media_type="image/jpeg", headers={"Cache-Control": "max-age=3600"})
 
 
 @app.get("/api/videos/{name}/label")

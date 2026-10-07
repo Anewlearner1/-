@@ -142,8 +142,10 @@ def _draw_caption(img: np.ndarray, frame_index: int) -> None:
                 (0, 255, 255), thick, cv2.LINE_AA)
 
 
-def make_label_proxy(video_path: "str | Path", out_path: "str | Path") -> dict:
-    """Write the labeling proxy for ``video_path`` to ``out_path`` (VP8 WebM).
+def make_label_proxy(video_path: "str | Path", out_path: "str | Path", fourcc: str = "VP80") -> dict:
+    """Write the labeling proxy for ``video_path`` to ``out_path`` (VP8 WebM by
+    default; ``fourcc="MJPG"`` writes an intra-only MJPEG AVI, the fallback when
+    the local OpenCV build has no VP8 encoder -- served frame by frame).
 
     Returns ``{fps, frame_count, width, height}`` of the proxy, where
     ``frame_count`` is the number of frames ``cv2.VideoCapture`` actually
@@ -159,7 +161,7 @@ def make_label_proxy(video_path: "str | Path", out_path: "str | Path") -> dict:
     if fps <= 0:
         cap.release()
         raise ValueError(f"video reports no fps: {video_path}")
-    tmp = out_path.with_name(out_path.stem + ".partial.webm")
+    tmp = out_path.with_name(out_path.stem + ".partial" + out_path.suffix)
     writer = None
     n = 0
     size = None
@@ -171,9 +173,9 @@ def make_label_proxy(video_path: "str | Path", out_path: "str | Path") -> dict:
             if size is None:
                 sw, sh = _scaled_size(frame.shape[1], frame.shape[0])
                 size = (sw, sh + BAR_H)
-                writer = cv2.VideoWriter(str(tmp), cv2.VideoWriter_fourcc(*"VP80"), fps, size)
+                writer = cv2.VideoWriter(str(tmp), cv2.VideoWriter_fourcc(*fourcc), fps, size)
                 if not writer.isOpened():
-                    raise RuntimeError("VP8 WebM encoder unavailable")
+                    raise EncoderUnavailable(f"{fourcc} encoder unavailable")
             if n >= MAX_FRAMES:
                 raise ValueError(f"video has more than {MAX_FRAMES} frames")
             out = np.empty((size[1], size[0], 3), np.uint8)
@@ -191,13 +193,44 @@ def make_label_proxy(video_path: "str | Path", out_path: "str | Path") -> dict:
         tmp.unlink(missing_ok=True)
         raise ValueError(f"no frames could be decoded from {video_path}")
     if not tmp.exists() or tmp.stat().st_size == 0:
-        raise RuntimeError(f"VP8 writer produced no output for {video_path}")
+        raise EncoderUnavailable(f"{fourcc} writer produced no output for {video_path}")
     bad = verify_proxy(tmp, n)
     if bad:
         tmp.unlink(missing_ok=True)
         raise RuntimeError(f"proxy barcode check failed for {video_path}: {bad[:5]}")
     os.replace(tmp, out_path)
     return {"fps": fps, "frame_count": n, "width": size[0], "height": size[1]}
+
+
+class EncoderUnavailable(RuntimeError):
+    """The local OpenCV build cannot write this codec (e.g. no VP8 on some Windows wheels)."""
+
+
+FORCE_FRAMES_ENV = "RALLY_LABEL_FORCE_FRAMES"   # "1" = skip VP8, use the frame-by-frame fallback
+
+
+def read_proxy_frame(path: "str | Path", n: int) -> np.ndarray:
+    """Decoder frame ``n`` from a proxy, verified by its barcode.
+
+    MJPEG is intra-only, so a direct seek lands exactly; if the barcode still
+    disagrees (any codec), fall back to reading sequentially from the start.
+    """
+    cap = cv2.VideoCapture(str(path))
+    try:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, n)
+        ok, frame = cap.read()
+        if ok and read_barcode(frame) == n:
+            return frame
+        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        for i in range(n + 1):
+            ok, frame = cap.read()
+            if not ok:
+                break
+        if ok and read_barcode(frame) == n:
+            return frame
+    finally:
+        cap.release()
+    raise IndexError(f"frame {n} not readable from proxy {path}")
 
 
 def verify_proxy(path: "str | Path", expected_frames: int) -> list:
@@ -227,16 +260,33 @@ def _cache_key(video_path: Path) -> str:
 
 
 def cached_proxy(video_path: "str | Path") -> tuple[Path, dict]:
-    """Build (or reuse) the cached proxy; returns ``(webm_path, info)``."""
+    """Build (or reuse) the cached proxy; returns ``(proxy_path, info)``.
+
+    ``info["mode"]`` is "video" (VP8 WebM played in a <video>) or "frames"
+    (MJPEG AVI served one JPEG per frame) when VP8 is unavailable or
+    ``RALLY_LABEL_FORCE_FRAMES=1``. Both carry the same burned barcodes.
+    """
     video_path = Path(video_path)
     base = proxy_dir() / f"{video_path.stem}-{_cache_key(video_path)}"
     # String concatenation, not with_suffix: stems may contain dots.
-    webm, info_path = Path(f"{base}.webm"), Path(f"{base}.json")
+    webm, avi, info_path = Path(f"{base}.webm"), Path(f"{base}.avi"), Path(f"{base}.json")
     with _locks_guard:
         lock = _locks.setdefault(str(base), threading.Lock())
     with lock:
-        if webm.exists() and info_path.exists():
-            return webm, json.loads(info_path.read_text(encoding="utf-8"))
-        info = make_label_proxy(video_path, webm)
+        if info_path.exists():
+            info = json.loads(info_path.read_text(encoding="utf-8"))
+            out = avi if info.get("mode") == "frames" else webm
+            if out.exists():
+                return out, info
+        info = None
+        if os.environ.get(FORCE_FRAMES_ENV) != "1":
+            try:
+                info = make_label_proxy(video_path, webm, "VP80") | {"mode": "video"}
+                out = webm
+            except EncoderUnavailable:
+                info = None
+        if info is None:
+            info = make_label_proxy(video_path, avi, "MJPG") | {"mode": "frames"}
+            out = avi
         info_path.write_text(json.dumps(info), encoding="utf-8")
-        return webm, info
+        return out, info

@@ -177,3 +177,69 @@ def test_page_shows_decoder_frames_and_saves_them(tmp_path, monkeypatch, fps, n,
     assert label["fps"] == pytest.approx(fps, rel=1e-3)
     meta = json.loads((tmp_path / "labels" / "rally.meta.json").read_text())
     assert meta["complete"] is True and meta["frame_numbering"] == "opencv_decoder"
+
+
+@pytest.mark.skipif(CHROME is None, reason="no Chromium binary")
+def test_frames_fallback_mode_without_vp8(tmp_path, monkeypatch):
+    """RALLY_LABEL_FORCE_FRAMES=1 simulates a PC whose OpenCV has no VP8 encoder:
+    the page must switch to one JPEG per decoder frame and stay exact."""
+    from labeling import label_server, proxy
+
+    vids = tmp_path / "videos"
+    vids.mkdir()
+    monkeypatch.setenv("RALLY_VIDEO_DIR", str(vids))
+    monkeypatch.setenv("RALLY_LABEL_DIR", str(tmp_path / "labels"))
+    monkeypatch.setenv("RALLY_LABEL_PROXY_DIR", str(tmp_path / "proxies"))
+    monkeypatch.setenv(proxy.FORCE_FRAMES_ENV, "1")
+    monkeypatch.setattr(label_server, "BACKUP_DIR", tmp_path / "backups")
+    n = 60
+    _write_clip(vids / "rally.mp4", 30.0, n)
+    server, thread = _serve(label_server.app, 8773)
+    seen = []
+    try:
+        with sync_api.sync_playwright() as p:
+            browser = p.chromium.launch(executable_path=CHROME)
+            page = browser.new_page(viewport={"width": 1280, "height": 900})
+            errors = []
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            page.on("dialog", lambda d: d.accept())
+            page.goto("http://127.0.0.1:8773/")
+            page.click("#video-list button[data-name='rally.mp4']")
+            page.wait_for_function("labelPage.state.curFrame === 0", timeout=60000)
+            assert page.evaluate("labelPage.state.mode") == "frames"
+            assert page.is_visible("#frame-img") and not page.is_visible("#video")
+
+            def shown():
+                page.evaluate("labelPage.idle()")
+                png = page.locator("#frame-img").screenshot()
+                img = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_COLOR)
+                w, h = page.evaluate("[document.getElementById('frame-img').naturalWidth,"
+                                     " document.getElementById('frame-img').naturalHeight]")
+                on_screen = proxy.read_barcode(cv2.resize(img, (w, h), interpolation=cv2.INTER_AREA))
+                return int(page.text_content("#frame-num")), on_screen
+
+            page.keyboard.press("ArrowRight"); seen.append((1, *shown()))
+            page.keyboard.press("Shift+ArrowRight"); seen.append((11, *shown()))
+            for f in (n - 1, 0, 37):
+                page.fill("#goto", str(f)); page.click("#btn-goto"); seen.append((f, *shown()))
+            page.keyboard.press("ArrowLeft"); seen.append((36, *shown()))
+            page.keyboard.press("Space"); page.wait_for_timeout(500); page.keyboard.press("Space")
+            page.evaluate("labelPage.idle()")
+            after, screen = shown()
+            assert after > 36 and after == screen                 # playback advanced, display agrees
+            page.fill("#goto", "20"); page.click("#btn-goto"); page.evaluate("labelPage.idle()")
+            page.keyboard.press("b")
+            page.check("input[name=hand][value=left]")
+            page.check("#complete")
+            page.click("#save")
+            page.wait_for_function("document.getElementById('save-status').textContent.includes('已儲存')",
+                                   timeout=10000)
+            browser.close()
+    finally:
+        server.should_exit = True
+        thread.join(timeout=5)
+    assert errors == []
+    assert all(req == page_n == scr for req, page_n, scr in seen), seen
+    lab = json.loads((tmp_path / "labels" / "rally.json").read_text())
+    assert lab["contact_frames"] == [20] and lab["stroke_labels"] == ["backhand"]
+    assert lab["racket_hand"] == "left"

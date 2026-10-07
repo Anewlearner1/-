@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from labeling import proxy
-from synth import write_jittery_video, write_slow_pan_video
+from synth import write_jittery_video, write_slow_pan_video, write_steady_textured_video
 
 
 def _decode_all(path):
@@ -96,3 +96,23 @@ def test_cache_reuses_proxy_and_stays_under_gitignored_data(tmp_path, monkeypatc
     assert proxy.DEFAULT_PROXY_DIR.parts[-2:] == ("data", "label_proxies")
     gitignore = (proxy.DEFAULT_PROXY_DIR.parent.parent / ".gitignore").read_text()
     assert "data/" in gitignore.split()
+
+
+def test_falls_back_to_frames_mode_when_vp8_is_unavailable(tmp_path, monkeypatch):
+    from labeling import proxy
+    real = proxy.make_label_proxy
+
+    def no_vp8(video, out, fourcc="VP80"):
+        if fourcc == "VP80":
+            raise proxy.EncoderUnavailable("VP80 encoder unavailable")
+        return real(video, out, fourcc)
+
+    monkeypatch.setenv("RALLY_LABEL_PROXY_DIR", str(tmp_path / "px"))
+    monkeypatch.setattr(proxy, "make_label_proxy", no_vp8)
+    src = write_steady_textured_video(tmp_path / "c.mp4", 30.0, 25)
+    path, info = proxy.cached_proxy(src)
+    assert info["mode"] == "frames" and path.suffix == ".avi" and info["frame_count"] == 25
+    for n in (0, 13, 24, 7):                                # random access, verified by barcode
+        assert proxy.read_barcode(proxy.read_proxy_frame(path, n)) == n
+    again, info2 = proxy.cached_proxy(src)                  # cache reused, same mode
+    assert again == path and info2["mode"] == "frames"

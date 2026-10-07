@@ -7,6 +7,7 @@
   const L = window.LabelLogic;
   const $ = (id) => document.getElementById(id);
   const video = $("video");
+  const frameImg = $("frame-img");   // "frames" mode: one server-rendered JPEG per decoder frame
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   const hasRVFC = "requestVideoFrameCallback" in HTMLVideoElement.prototype;
@@ -16,15 +17,19 @@
     curFrame: null,          // last barcode read; null = unreadable
     marks: [], dirty: false,
     corrections: 0,          // seeks whose first landing the barcode had to correct
+    mode: "video",           // "video" (VP8 proxy) or "frames" (no VP8 encoder on this PC)
+    playing: false,          // frames-mode playback loop
   };
   let queue = Promise.resolve();
 
   // ---------- barcode reading ----------
   function readFrame() {
-    const w = video.videoWidth;
-    if (!w || video.readyState < 2) return null;
+    const frames = state.mode === "frames";
+    const src = frames ? frameImg : video;
+    const w = frames ? frameImg.naturalWidth : video.videoWidth;
+    if (!w || (frames ? !frameImg.complete : video.readyState < 2)) return null;
     if (canvas.width !== w) { canvas.width = w; canvas.height = L.BAR_H; }
-    ctx.drawImage(video, 0, 0, w, L.BAR_H, 0, 0, w, L.BAR_H);
+    ctx.drawImage(src, 0, 0, w, L.BAR_H, 0, 0, w, L.BAR_H);
     const img = ctx.getImageData(0, 0, w, L.BAR_H);
     const r = L.decodeBarcode(img.data, w, L.BAR_H);
     return r.ok ? r.frame : null;
@@ -67,9 +72,22 @@
     });
   }
 
+  function loadImage(frame) {
+    return new Promise((resolve) => {
+      frameImg.onload = () => resolve(true);
+      frameImg.onerror = () => resolve(false);
+      frameImg.src = api(state.name, "frame/" + frame);
+    });
+  }
+
   async function doSeek(target) {
     if (!state.fps) return;
     target = L.clampFrame(target, state.frameCount);
+    if (state.mode === "frames") {          // exact by construction; still verified by barcode
+      await loadImage(target);
+      refresh();
+      return;
+    }
     if (!video.paused) video.pause();
     let t = L.seekTimeForFrame(target, state.fps) + (state.testTimeOffset || 0);
     for (let attempt = 0; attempt < 4; attempt++) {
@@ -88,7 +106,8 @@
   function seekToFrame(frame) { return enqueue(() => doSeek(frame)); }
   function step(delta) {
     return enqueue(async () => {
-      if (!video.paused) { video.pause(); await nextPaint(250); refresh(); }
+      if (state.mode === "frames") state.playing = false;
+      else if (!video.paused) { video.pause(); await nextPaint(250); refresh(); }
       if (state.curFrame === null) refresh();
       if (state.curFrame === null) return;          // unreadable: do not guess
       await doSeek(state.curFrame + delta);
@@ -103,14 +122,30 @@
   video.addEventListener("play", () => { if (hasRVFC) video.requestVideoFrameCallback(onPlayFrame); });
   if (!hasRVFC) video.addEventListener("timeupdate", refresh);
   video.addEventListener("pause", () => { nextPaint(250).then(refresh); });
+  async function playFrames() {             // best-effort playback: next frame as fast as it loads
+    while (state.playing && state.curFrame !== null && state.curFrame < state.frameCount - 1) {
+      const t0 = performance.now();
+      await loadImage(state.curFrame + 1);
+      refresh();
+      const wait = 1000 / state.fps - (performance.now() - t0);
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    }
+    state.playing = false;
+  }
   function togglePlay() {
+    if (state.mode === "frames") {
+      if (state.playing) { state.playing = false; return queue; }
+      state.playing = true;
+      return enqueue(playFrames);
+    }
     return enqueue(async () => { if (video.paused) await video.play(); else video.pause(); });
   }
 
   // ---------- marks ----------
   function mark(stroke) {
     return enqueue(async () => {
-      if (!video.paused) { video.pause(); await nextPaint(250); }
+      if (state.mode === "frames") state.playing = false;
+      else if (!video.paused) { video.pause(); await nextPaint(250); }
       const f = refresh();
       if (f === null) { status("讀不到幀號，沒有標記。", true); return; }
       state.marks = L.addMark(state.marks, f, stroke);
@@ -218,13 +253,22 @@
       }
     }
 
-    await new Promise((resolve) => {
-      const ok = () => { video.removeEventListener("loadeddata", ok); resolve(); };
-      video.addEventListener("loadeddata", ok);
-      video.src = api(name, "proxy");
-      video.load();
-    });
-    $("load-status").textContent = "";
+    state.mode = info.mode === "frames" ? "frames" : "video";
+    state.playing = false;
+    video.hidden = state.mode === "frames";
+    frameImg.hidden = state.mode !== "frames";
+    if (state.mode === "video") {
+      await new Promise((resolve) => {
+        const ok = () => { video.removeEventListener("loadeddata", ok); resolve(); };
+        video.addEventListener("loadeddata", ok);
+        video.src = api(name, "proxy");
+        video.load();
+      });
+    } else {
+      video.removeAttribute("src");
+    }
+    $("load-status").textContent = state.mode === "frames"
+      ? "逐幀圖片模式（這台電腦的 OpenCV 不能產生 VP8 影片）：標註一樣精確，只是播放較慢。" : "";
     await seekToFrame(0);
     renderMarks();
   }
