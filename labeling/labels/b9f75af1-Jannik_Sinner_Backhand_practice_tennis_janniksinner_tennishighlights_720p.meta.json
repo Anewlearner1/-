@@ -1,0 +1,13 @@
+{
+  "source": "assistant_classified_owner_checked_pose_detections",
+  "complete": false,
+  "frame_numbering": "opencv_decoder",
+  "reviewer": "assistant first, then project owner",
+  "date": "2026-10-07",
+  "not_contacts": [
+    190
+  ],
+  "unsure": [],
+  "notes": "Contact frames are the pose detector's event frames, NOT owner-located hit frames (pose peak is within about +/-8 frames of the hit). Assistant classified 31 detections from every-2nd-frame strips; owner checked: B25/B26 and B30/B31 are each one hit, B20 and B21 are hits, B17, B23 and B27 as the assistant said; everything else unmentioned accepted. B18 110, B20 258, B21 405, B22 484; no hit B19 190 (camera cut). Hits outside the detections were not reviewed, so the list is not complete. Racket hand assumed right (not confirmed from the footage).",
+  "stroke_labels_note": "All confirmed hits backhand; no forehand seen."
+}

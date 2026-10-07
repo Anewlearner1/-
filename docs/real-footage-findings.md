@@ -581,3 +581,32 @@ These are the ASSISTANT's reading of small strips, not ground truth; the owner h
 No forehands were seen in these clips.
 
 Event frames: B1 sinner_cc f19, B2 sinner_cc f37, B3 sinner_cc f49, B4 sinner_cc f110, B5 sinner_cc f193, B6 sinner_cc f227, B7 sinner_cc f257, B8 sinner_cc f336, B9 sinner_cc f348, B10 sinner_cc f386, B11 sinner_cc f409, B12 sinner_cc f484, B13 sinner_cc f553, B14 sinner_cc f632, B15 sinner_cc f661, B16 sinner_cc f700, B17 sinner_cc f788, B18 sinner_bh f110, B19 sinner_bh f190, B20 sinner_bh f258, B21 sinner_bh f405, B22 sinner_bh f484, B23 ruud f24, B24 ruud f99, B25 ruud f163, B26 ruud f178, B27 ruud f328, B28 ruud f374, B29 ruud f395, B30 ruud f468, B31 ruud f481.
+
+### Owner check of the backhand classification (2026-10-07)
+
+Owner corrections: B25/B26 and B30/B31 are each **one** hit (B25 and B30 are duplicates, counted as no-hit); B20 and B21 are hits; B17, B23 and B27 as the assistant said. Unmentioned events accepted. Result: **18 backhand hits** (Sinner CC 9, Sinner BH 4, Ruud 5), 9 no-hit detections, 4 left unsure (B1, B5, B10, B27, excluded). Labels written to `labeling/labels/{2cd68ca3,b9f75af1,f76ed687}-*.json`, with partial lists. The contact frames are the **detector's event frames**, not owner-located hit frames. Racket hand is assumed right.
+
+**M3, oracle mode** (classified at the labeled frame):
+
+| | inferred hand | hand forced right |
+|---|---|---|
+| 18 new backhands | **2/18** (11 called forehand, 3 other, 2 unknown) | **10/18** (4 forehand, 4 other) |
+| all 46 hits (25 FH, 21 BH) | 6/46 = 0.13 | 20/46 = 0.43 |
+
+Per clip, hand forced right: Sinner CC 7/9 (2 other), Sinner BH 2/4, Ruud 1/5.
+
+- **Hand inference picked "left" on all three new clips.** It has now been wrong on 5 behind or behind-ish clips: Komura, IMG_3173, Sinner ×2 and Ruud. Fed 1 and Fed 2 are the only clips it got right. A two-handed backhand moves both wrists, so "fastest wrist = racket hand" is not a usable rule.
+- Even with the correct hand, backhand accuracy is 0.56. Answering "forehand" every time now scores 25/46 = 0.54 overall, so the classifier still does not beat the trivial baseline on the combined set (0.43 vs 0.54).
+- M3 (≥0.85) is **not met**.
+
+**M2 on these clips** (held out: neither the ball-colour rule nor the merge window was tuned on them). The hits were found only among detections, so recall is an upper bound:
+
+| | kept | hits | no-hit | unsure | precision (reviewed) | recall (of 18) |
+|---|---|---|---|---|---|---|
+| pose only | 31 | 18 | 9 | 4 | 0.67 | 1.00 |
+| merge 0.5 s | 27 | 16 | 7 | 4 | 0.70 | 0.89 |
+| ball filter | 24 | 18 | 4 | 2 | 0.82 | 1.00 |
+| ball + merge | 22 | 16 | 4 | 2 | 0.80 | 0.89 |
+
+- The ball filter removed all 5 Sinner CC no-hits and lost no hit. It had no effect on Ruud (all 3 no-hits kept).
+- **Merge hurts on Ruud**: in both duplicate pairs the earlier event is the takeback (163, 468) and the real hit is 13–15 frames later. "Keep the earlier event" drops the hit. That was the opposite case of the forehand clips the window was chosen on. Keeping the faster or later peak would be the candidate fix, but it has not been tested.

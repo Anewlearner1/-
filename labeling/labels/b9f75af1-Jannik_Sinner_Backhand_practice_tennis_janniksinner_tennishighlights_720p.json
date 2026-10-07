@@ -1,0 +1,17 @@
+{
+  "video_id": "b9f75af1-Jannik_Sinner_Backhand_practice_tennis_janniksinner_tennishighlights_720p",
+  "fps": 30.0,
+  "contact_frames": [
+    110,
+    258,
+    405,
+    484
+  ],
+  "stroke_labels": [
+    "backhand",
+    "backhand",
+    "backhand",
+    "backhand"
+  ],
+  "source": "real"
+}

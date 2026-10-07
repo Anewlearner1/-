@@ -1,0 +1,27 @@
+{
+  "video_id": "2cd68ca3-Jannik_Sinner_hitting_backhands_cross_court_Practice_ATP_Finals_tennis_720p",
+  "fps": 29.97,
+  "contact_frames": [
+    37,
+    110,
+    257,
+    336,
+    409,
+    484,
+    553,
+    632,
+    700
+  ],
+  "stroke_labels": [
+    "backhand",
+    "backhand",
+    "backhand",
+    "backhand",
+    "backhand",
+    "backhand",
+    "backhand",
+    "backhand",
+    "backhand"
+  ],
+  "source": "real"
+}

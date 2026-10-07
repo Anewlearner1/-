@@ -1,0 +1,19 @@
+{
+  "video_id": "f76ed687-GREAT_CASPER_RUUD_BACKHAND_RALLY_IN_PRACTICE_tennis_shorts_720p",
+  "fps": 30.0,
+  "contact_frames": [
+    99,
+    178,
+    374,
+    395,
+    481
+  ],
+  "stroke_labels": [
+    "backhand",
+    "backhand",
+    "backhand",
+    "backhand",
+    "backhand"
+  ],
+  "source": "real"
+}
