@@ -33,12 +33,15 @@ each field/status value; read it before changing this response shape.
 - `GET /uploads/{upload_id}` -> status + stored quality report.
 - `GET /uploads/{upload_id}/shots` -> `{upload_id, shot_count, shots[]}`
   ordered by `shot_index`; each shot has `contact_frame`, `contact_time_s`,
-  `peak_speed` (wrist speed, not ball speed), `wrist`, `fh_bh_label`,
+  `peak_speed` (wrist speed, not ball speed), `wrist`, `fh_bh_label`, `fh_bh_confidence`
+  (heuristic 0-1, not a probability; 0.3 = wrist-gap guess),
   `ball_speed_kmh`, `source`. `fh_bh_label` / `ball_speed_kmh` are JSON
-  `null` (= dashboard "尚未分析", never 0) until M3 / M5 exist. Nothing
-  fills `shots` in production yet; `db.insert_shots_from_result()` is for a
-  future worker (tested with `ml.shot_timing.detect_shots`).
+  `null` (= dashboard "尚未分析", never 0) until analyzed. `shots` is filled by
+  `db.insert_shots_from_result()`, called by the worker (`backend/worker.py`).
 - Unknown id -> 404 `{"error": "upload_not_found", "detail": ...}`.
+- `POST /upload` takes an optional form field `racket_hand` (`left`/`right`), stored in
+  `uploads.racket_hand` and returned by `GET /uploads/{id}`; anything else -> 422
+  `{"error": "invalid_racket_hand"}` before the file is stored.
 - DB: env `RALLY_DB_PATH`, default `data/rally.sqlite3`. DB column is
   `stroke_label`; API key is `fh_bh_label` per design/dashboard.md.
 - A malformed/unreadable file (`ValueError` from `check_upload_quality`)
@@ -134,7 +137,8 @@ Claims the oldest `queued` upload atomically (`BEGIN IMMEDIATE`), sets `processi
 `cv.pose_overlay.extract_player_landmarks` + `ml.shot_timing.detect_shots` (optionally the
 ball filter and duplicate merge), replaces that upload's `shots`, sets `done`; any exception
 sets `failed` and stores the message in `uploads.error` (returned by `GET /uploads/{id}` as
-`error`). Not done: forehand/backhand labels (`fh_bh_label` stays null; the classifier has no
-real validation), ball speed, retries, GPU routing, scheduling, billing. Run on a real video
+`error`). Forehand/backhand: only with `--classify-strokes` and a `racket_hand` given at upload
+(never inferred); otherwise `fh_bh_label` stays null. Off by default because the classifier is
+below the M3 target (0.61 leave-one-clip-out on 46 real hits). Not done: ball speed, retries, GPU routing, scheduling, billing. Run on a real video
 (Fons practice, queued directly past the 60 fps gate): `done`, 8 shots with merge 0.5 s, in
 the order and frames of the earlier standalone run.

@@ -28,6 +28,7 @@ DB_ENV_VAR = "RALLY_DB_PATH"
 DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "rally.sqlite3"
 
 UPLOAD_STATUSES = ("queued", "processing", "done", "failed")
+RACKET_HANDS = ("left", "right")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS uploads (
@@ -37,7 +38,8 @@ CREATE TABLE IF NOT EXISTS uploads (
     created_at TEXT NOT NULL,
     status TEXT NOT NULL CHECK (status IN ('queued','processing','done','failed')),
     quality_report_json TEXT NOT NULL,
-    error TEXT                         -- why status is 'failed'; NULL otherwise
+    error TEXT,                        -- why status is 'failed'; NULL otherwise
+    racket_hand TEXT                   -- "left"/"right" as given by the user; NULL = not given
 );
 CREATE TABLE IF NOT EXISTS shots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -47,7 +49,8 @@ CREATE TABLE IF NOT EXISTS shots (
     contact_time_s REAL NOT NULL,
     peak_speed REAL NOT NULL,          -- wrist speed, NOT ball speed
     wrist TEXT,                        -- "left"/"right" (dashboard contract)
-    stroke_label TEXT,                 -- NULL until M3 classifier has run
+    stroke_label TEXT,                 -- NULL until M3 classifier has run (or it abstained)
+    stroke_confidence REAL,            -- heuristic 0-1, NOT a probability; low = guess
     ball_speed_kmh REAL,               -- NULL until M5 exists
     source TEXT NOT NULL,              -- provenance, e.g. "ml.shot_timing.detect_shots"
     UNIQUE (upload_id, shot_index)
@@ -69,21 +72,29 @@ def connect() -> sqlite3.Connection:
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(uploads)")}
     if "error" not in cols:                       # databases created before this column existed
         conn.execute("ALTER TABLE uploads ADD COLUMN error TEXT")
+    if "racket_hand" not in cols:
+        conn.execute("ALTER TABLE uploads ADD COLUMN racket_hand TEXT")
+    shot_cols = {r["name"] for r in conn.execute("PRAGMA table_info(shots)")}
+    if "stroke_confidence" not in shot_cols:
+        conn.execute("ALTER TABLE shots ADD COLUMN stroke_confidence REAL")
     return conn
 
 
 def create_upload(original_filename: Optional[str], stored_path: str,
-                  quality_report: dict, status: str = "queued") -> str:
+                  quality_report: dict, status: str = "queued",
+                  racket_hand: Optional[str] = None) -> str:
     if status not in UPLOAD_STATUSES:
         raise ValueError(f"invalid status {status!r}")
+    if racket_hand is not None and racket_hand not in RACKET_HANDS:
+        raise ValueError(f"invalid racket_hand {racket_hand!r}")
     upload_id = uuid.uuid4().hex
     with closing(connect()) as conn, conn:
         conn.execute(
             "INSERT INTO uploads (id, original_filename, stored_path, created_at,"
-            " status, quality_report_json) VALUES (?,?,?,?,?,?)",
+            " status, quality_report_json, racket_hand) VALUES (?,?,?,?,?,?,?)",
             (upload_id, original_filename, stored_path,
              datetime.now(timezone.utc).isoformat(), status,
-             json.dumps(quality_report, ensure_ascii=False)),
+             json.dumps(quality_report, ensure_ascii=False), racket_hand),
         )
     return upload_id
 
@@ -100,6 +111,7 @@ def get_upload(upload_id: str) -> Optional[dict]:
         "status": row["status"],
         "quality_report": json.loads(row["quality_report_json"]),
         "error": row["error"],
+        "racket_hand": row["racket_hand"],
     }
 
 
@@ -154,25 +166,39 @@ def stored_path(upload_id: str) -> Optional[str]:
 
 
 def insert_shots_from_result(upload_id: str, result: Any,
-                             source: str = "ml.shot_timing.detect_shots") -> int:
+                             source: str = "ml.shot_timing.detect_shots",
+                             stroke_labels: Optional[list[Optional[str]]] = None,
+                             stroke_confidences: Optional[list[Optional[float]]] = None) -> int:
     """Store the events of an `ml.shot_timing.ShotTimingResult` for an upload.
 
-    Intended for a future worker; nothing calls it in production today.
-    Replaces any existing shots for the upload. stroke_label and
-    ball_speed_kmh are left NULL (not available from shot timing).
+    Called by backend/worker.py. Replaces any existing shots for the upload.
+    ``stroke_labels`` (aligned with ``result.events``) fills stroke_label,
+    ``stroke_confidences`` fills stroke_confidence. Without labels, and for
+    "unknown", both stay NULL. Known limitation: NULL then means both "not
+    analyzed" and "classifier abstained". ball_speed_kmh is always NULL.
     Returns the number of shots inserted.
     """
+    events = list(result.events)
+    if stroke_labels is None:
+        stroke_labels = [None] * len(events)
+    if stroke_confidences is None:
+        stroke_confidences = [None] * len(events)
+    if not len(stroke_labels) == len(stroke_confidences) == len(events):
+        raise ValueError(f"{len(stroke_labels)} stroke labels / {len(stroke_confidences)} "
+                         f"confidences for {len(events)} shots")
+    pairs = [(None, None) if s in (None, "unknown") else (s, None if c is None else float(c))
+             for s, c in zip(stroke_labels, stroke_confidences)]
     with closing(connect()) as conn, conn:
         conn.execute("DELETE FROM shots WHERE upload_id = ?", (upload_id,))
         conn.executemany(
             "INSERT INTO shots (upload_id, shot_index, contact_frame, contact_time_s,"
-            " peak_speed, wrist, stroke_label, ball_speed_kmh, source)"
-            " VALUES (?,?,?,?,?,?,NULL,NULL,?)",
+            " peak_speed, wrist, stroke_label, stroke_confidence, ball_speed_kmh, source)"
+            " VALUES (?,?,?,?,?,?,?,?,NULL,?)",
             [(upload_id, i, int(e.contact_frame), float(e.contact_time_s),
-              float(e.peak_speed), e.wrist, source)
-             for i, e in enumerate(result.events)],
+              float(e.peak_speed), e.wrist, label, conf, source)
+             for i, (e, (label, conf)) in enumerate(zip(events, pairs))],
         )
-    return len(result.events)
+    return len(events)
 
 
 def list_shots(upload_id: str) -> list[dict]:
@@ -188,6 +214,7 @@ def list_shots(upload_id: str) -> list[dict]:
             "peak_speed": r["peak_speed"],
             "wrist": r["wrist"],
             "fh_bh_label": r["stroke_label"],      # None -> JSON null -> 尚未分析
+            "fh_bh_confidence": r["stroke_confidence"],  # heuristic, not a probability
             "ball_speed_kmh": r["ball_speed_kmh"],  # None -> JSON null -> 尚未分析
             "source": r["source"],
         }

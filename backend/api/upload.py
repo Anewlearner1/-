@@ -31,7 +31,9 @@ import shutil
 import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, UploadFile, File
+from typing import Optional
+
+from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import JSONResponse
 
 from backend import db
@@ -79,22 +81,39 @@ def _quality_report_to_dict(report: QualityReport) -> dict:
     }
 
 
-def _enqueue_upload_record(original_filename, stored_path: str, report: dict) -> str:
+def _enqueue_upload_record(original_filename, stored_path: str, report: dict,
+                           racket_hand: Optional[str] = None) -> str:
     """Persist a passed upload as a real `uploads` row with status "queued".
 
     The row is real. Processing happens only if `python -m backend.worker` is
     running (this API does not start it); otherwise the status stays "queued".
     """
-    return db.create_upload(original_filename, stored_path, report, status="queued")
+    return db.create_upload(original_filename, stored_path, report, status="queued",
+                            racket_hand=racket_hand)
 
 
 @app.post("/upload")
-async def upload_video(file: UploadFile = File(...)) -> JSONResponse:
+async def upload_video(file: UploadFile = File(...),
+                       racket_hand: Optional[str] = Form(None)) -> JSONResponse:
     """Accepts an uploaded video, runs the upload-time quality gate, and
     returns a JSON QualityReport (plus an upload_id stub if it passed).
 
+    ``racket_hand`` (optional form field, "left" or "right") is stored with
+    the upload; the worker uses it for forehand/backhand because inferring the
+    hand from motion failed on 5 of 7 real clips. Anything else -> 422
+    {"error": "invalid_racket_hand"} before the file is stored.
+
     See module docstring for the two distinct response shapes.
     """
+    if racket_hand == "":
+        racket_hand = None
+    if racket_hand is not None and racket_hand not in db.RACKET_HANDS:
+        await file.close()
+        return JSONResponse(
+            status_code=422,
+            content={"error": "invalid_racket_hand",
+                     "detail": f"racket_hand must be one of {list(db.RACKET_HANDS)}"},
+        )
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
     # Keep the original suffix (if any) so OpenCV's container sniffing has
@@ -129,7 +148,8 @@ async def upload_video(file: UploadFile = File(...)) -> JSONResponse:
     body = _quality_report_to_dict(report)
     if report.passed:
         # Real DB row, but no worker consumes it -- see docstring.
-        body["upload_id"] = _enqueue_upload_record(file.filename, str(dest), body)
+        body["upload_id"] = _enqueue_upload_record(file.filename, str(dest), body,
+                                                   racket_hand=racket_hand)
     # Failed-gate uploads: NO row is created (status set has no "rejected";
     # the report is returned to the client, who must re-shoot).
 

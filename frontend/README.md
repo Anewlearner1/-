@@ -92,9 +92,10 @@ every `except` branch the real endpoint has today:
 | `invalid_video_file` | `check_upload_quality()` raises `ValueError` (OpenCV can't open the file / not a real video container) — HTTP 422 | 檔案格式不支援，請確認為常見影片格式後重新上傳。 |
 | `file_not_found` | Defensive-only: the file the endpoint itself just wrote to disk went missing before it could be read back — HTTP 404 | 伺服器未能讀取您剛上傳的檔案，這通常是暫時性問題，與影片品質無關，請重新上傳一次；若持續發生請聯絡我們。 |
 | `upload_not_found` | `GET /uploads/{id}` or `GET /uploads/{id}/shots` with an id that has no record (stale/mistyped link, or never created: failed-gate uploads create no row) — HTTP 404. **Not reachable from the current upload screen** (it only calls `POST /upload`); mapping is in place for the dashboard (M6) callers, not wired to any screen today | 找不到這筆上傳紀錄，可能是連結有誤或已失效，與影片品質無關；請回到上傳頁重新上傳影片。 |
+| `invalid_racket_hand` | `POST /upload` optional form field `racket_hand` is not `left`/`right` (empty = not given) — HTTP 422, file not stored. **Not reachable from the current upload screen** (it sends no racket_hand; no selector yet) | 持拍手設定無效，請選擇「右手」或「左手」後重新上傳；這與影片品質無關。 |
 | *(anything else / missing)* | Any future/unrecognized error code, or a non-200 response that isn't even `{"error": ...}`-shaped (e.g. a network failure) | 發生未預期的錯誤，請稍後再試一次；若持續發生請聯絡我們。 |
 
-All four use the §4 "problem with the file itself" visual language
+All five use the §4 "problem with the file itself" visual language
 (same `.card.fail` style, ⚠ marker), which is deliberately **not** the
 §3b re-shoot screen's styling even though both use a red-ish card — the
 re-shoot screen is reserved for an actual `passed:false` `QualityReport`.

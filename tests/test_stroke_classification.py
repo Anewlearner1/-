@@ -16,11 +16,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from cv.pose_overlay import L_SHOULDER, R_SHOULDER, R_WRIST
+from cv.pose_overlay import L_SHOULDER, L_WRIST, R_SHOULDER, R_WRIST
 from ml.eval_stroke_classification import evaluate, format_report, main, save_landmarks
 from ml.shot_timing import ShotEvent, detect_shots
 from ml.stroke_classification import (
-    classify_shot, classify_shots, detect_racket_hand,
+    GAP_CONF, WRIST_GAP_BACKHAND, classify_shot, classify_shots, detect_racket_hand,
 )
 from tests.synth_pose import synth_stroke_sequence
 
@@ -113,6 +113,9 @@ def test_nan_in_backswing_window_does_not_crash():
     r = classify_shot(seq, ev(70), hand="right")
     assert r.label in ("forehand", "backhand", "other", "unknown")
     seq.landmarks[40:70, R_WRIST] = np.nan       # whole window gone
+    r = classify_shot(seq, ev(70), hand="right")    # contact still visible -> gap fallback only
+    assert "wrist-gap fallback" in r.reason and r.confidence == GAP_CONF
+    seq.landmarks[40:80, R_WRIST] = np.nan       # contact gone too: no gap, no guess
     assert classify_shot(seq, ev(70), hand="right").label == "unknown"
 
 
@@ -133,12 +136,29 @@ def test_all_nan_clip_and_bad_frames_and_empty_events():
     assert [r.label for r in classify_shots(seq, [ev(70)])] == ["unknown"]
 
 
-def test_edge_on_shoulders_unknown():
-    """Side-on camera: shoulders overlap in 2D, racket side is unresolvable."""
+def _wrists_together(seq, lo, hi):
+    seq.landmarks[lo:hi, L_WRIST] = seq.landmarks[lo:hi, R_WRIST] + [5.0, 0.0]
+
+
+def test_edge_on_shoulders_fall_back_to_wrist_gap():
+    """Side-on camera: shoulders overlap in 2D, the takeback rule abstains and
+    the low-confidence wrist-gap fallback answers instead."""
     seq = synth_stroke_sequence(STROKES[:2])
     seq.landmarks[:, L_SHOULDER, 0] = seq.landmarks[:, R_SHOULDER, 0]
     r = classify_shot(seq, ev(70), hand="right")
-    assert r.label == "unknown" and "edge-on" in r.reason
+    assert "edge-on" in r.reason and "wrist-gap fallback" in r.reason
+    assert r.confidence == GAP_CONF
+    assert r.label == ("backhand" if r.wrist_gap < WRIST_GAP_BACKHAND else "forehand")
+    _wrists_together(seq, 60, 80)
+    assert classify_shot(seq, ev(70), hand="right").label == "backhand"
+
+
+def test_wrists_together_veto_the_serve_gate():
+    """A two-handed stroke can reach high; with both wrists together it is not a serve."""
+    seq = synth_stroke_sequence([(70, "overhead")])
+    _wrists_together(seq, 60, 80)
+    r = classify_shot(seq, ev(70), hand="right")
+    assert r.label != "other" and r.wrist_gap < WRIST_GAP_BACKHAND
 
 
 def test_tiebreak_uses_contact_side_when_takeback_ambiguous():
@@ -156,11 +176,11 @@ def test_tiebreak_uses_contact_side_when_takeback_ambiguous():
     assert r.confidence <= 0.5
 
 
-def test_ambiguous_everywhere_is_unknown():
+def test_ambiguous_everywhere_uses_gap_fallback():
     seq = synth_stroke_sequence([(70, "forehand")])
     seq.landmarks[40:75, R_WRIST, 0] = 640.0
     r = classify_shot(seq, ev(70), hand="right")
-    assert r.label == "unknown"
+    assert "wrist-gap fallback" in r.reason and r.label in ("forehand", "backhand")
 
 
 def test_weak_hand_inference_lowers_confidence():
@@ -215,3 +235,11 @@ def test_eval_rejects_malformed_labels(tmp_path):
                                "stroke_labels": ["slice"]}))
     with pytest.raises(ValueError):
         evaluate([bad], landmarks_dir=tmp_path)
+
+
+def test_side_on_serve_is_still_other_not_a_gap_guess():
+    """The serve gate runs before the edge-on check, so the fallback cannot
+    turn a side-on serve (off arm far away -> big gap) into a forehand."""
+    seq = synth_stroke_sequence([(70, "overhead")])
+    seq.landmarks[:, L_SHOULDER, 0] = seq.landmarks[:, R_SHOULDER, 0]
+    assert classify_shot(seq, ev(70), hand="right").label == "other"

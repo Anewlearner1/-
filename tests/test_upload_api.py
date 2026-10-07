@@ -101,3 +101,30 @@ def test_malformed_file_returns_distinct_error_shape(tmp_path, client):
     assert "checks" not in body
     assert body["error"] == "invalid_video_file"
     assert "detail" in body
+
+
+def test_racket_hand_is_stored_and_an_invalid_one_is_rejected(tmp_path, client, monkeypatch):
+    from backend import db
+    monkeypatch.setenv(db.DB_ENV_VAR, str(tmp_path / "api.sqlite3"))
+    video = tmp_path / "good.mp4"
+    try:
+        write_steady_textured_video(video, fps=60, n_frames=90)
+    except RuntimeError:
+        pytest.skip("此環境缺少 mp4 編碼器")
+    _skip_if_no_encoder(video)
+
+    with open(video, "rb") as f:
+        bad = client.post("/upload", files={"file": ("good.mp4", f, "video/mp4")},
+                          data={"racket_hand": "both"})
+    assert bad.status_code == 422 and bad.json()["error"] == "invalid_racket_hand"
+    assert not (tmp_path / "uploads").exists()           # rejected before the file is stored
+
+    with open(video, "rb") as f:
+        ok = client.post("/upload", files={"file": ("good.mp4", f, "video/mp4")},
+                         data={"racket_hand": "left"})
+    assert ok.status_code == 200
+    assert db.get_upload(ok.json()["upload_id"])["racket_hand"] == "left"
+
+    with open(video, "rb") as f:
+        none = client.post("/upload", files={"file": ("good.mp4", f, "video/mp4")})
+    assert db.get_upload(none.json()["upload_id"])["racket_hand"] is None

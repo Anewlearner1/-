@@ -104,3 +104,64 @@ def test_an_old_database_without_the_error_column_is_migrated(tmp_path, monkeypa
     con.commit(); con.close()
     monkeypatch.setenv(db.DB_ENV_VAR, str(path))
     assert db.get_upload("u")["error"] is None
+    assert db.get_upload("u")["racket_hand"] is None
+
+
+def test_strokes_are_labeled_only_with_the_flag_and_a_given_hand(env):
+    given = db.create_upload("h.mp4", str(env), {"passed": True}, racket_hand="right")
+    missing = _queue(env, "n.mp4")
+    worker.process_upload(given)                                  # flag off
+    assert all(s["fh_bh_label"] is None for s in db.list_shots(given))
+    worker.process_upload(missing, classify_strokes=True)         # no hand: never inferred
+    assert all(s["fh_bh_label"] is None for s in db.list_shots(missing))
+    worker.process_upload(given, classify_strokes=True)
+    shots = db.list_shots(given)
+    assert shots and all(s["fh_bh_label"] in ("forehand", "backhand", "other", None) for s in shots)
+    assert "stroke_rule(hand=right,given)" in shots[0]["source"]
+    assert all((s["fh_bh_label"] is None) == (s["fh_bh_confidence"] is None) for s in shots)
+
+
+def test_a_classifier_error_keeps_the_detected_shots(env, monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("classifier broke")
+    monkeypatch.setattr("ml.stroke_classification.classify_shots", boom)
+    uid = db.create_upload("h.mp4", str(env), {"passed": True}, racket_hand="left")
+    assert worker.process_upload(uid, classify_strokes=True) == 3
+    assert db.get_upload(uid)["status"] == "done"
+    shots = db.list_shots(uid)
+    assert all(s["fh_bh_label"] is None for s in shots)
+    assert "stroke_rule_failed(RuntimeError)" in shots[0]["source"]
+
+
+def test_invalid_racket_hand_is_rejected_by_the_db(env):
+    with pytest.raises(ValueError):
+        db.create_upload("x.mp4", str(env), {}, racket_hand="both")
+
+
+def test_unknown_stroke_labels_are_stored_as_null(env):
+    from ml.shot_timing import ShotEvent
+    uid = _queue(env)
+    ev = [ShotEvent(10, 0.33, 1.0, "right"), ShotEvent(50, 1.67, 1.0, "right")]
+    result = type("R", (), {"events": ev})()
+    db.insert_shots_from_result(uid, result, stroke_labels=["backhand", "unknown"],
+                                stroke_confidences=[0.3, 0.0])
+    shots = db.list_shots(uid)
+    assert [s["fh_bh_label"] for s in shots] == ["backhand", None]
+    assert [s["fh_bh_confidence"] for s in shots] == [0.3, None]
+    with pytest.raises(ValueError):
+        db.insert_shots_from_result(uid, result, stroke_labels=["backhand"])
+
+
+def test_an_old_shots_table_gets_the_confidence_column(tmp_path, monkeypatch):
+    import sqlite3
+    path = tmp_path / "old2.sqlite3"
+    con = sqlite3.connect(path)
+    con.executescript("CREATE TABLE shots (id INTEGER PRIMARY KEY AUTOINCREMENT, upload_id TEXT NOT NULL, "
+                      "shot_index INTEGER NOT NULL, contact_frame INTEGER NOT NULL, contact_time_s REAL NOT NULL, "
+                      "peak_speed REAL NOT NULL, wrist TEXT, stroke_label TEXT, ball_speed_kmh REAL, "
+                      "source TEXT NOT NULL, UNIQUE (upload_id, shot_index));")
+    con.execute("INSERT INTO shots (upload_id, shot_index, contact_frame, contact_time_s, peak_speed, source) "
+                "VALUES ('u', 0, 1, 0.1, 1.0, 's')")
+    con.commit(); con.close()
+    monkeypatch.setenv(db.DB_ENV_VAR, str(path))
+    assert db.list_shots("u")[0]["fh_bh_confidence"] is None

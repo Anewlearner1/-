@@ -1,12 +1,15 @@
 """M3: forehand / backhand classification of detected shots -- rule-based
 baseline, pose-only, 2D pixel-space.
 
-STATUS: UNVALIDATED. No real labeled footage exists (labeling/ is tooling
-only), so nothing here has been measured on real video. The synthetic
-tests (tests/test_stroke_classification.py) check the rule's *logic* only.
+STATUS: BELOW TARGET. Measured on 46 owner-labeled real hits (7 non-spec
+clips, docs/real-footage-findings.md); ADR 0002's 0.85 is not met. The
+synthetic tests (tests/test_stroke_classification.py) check *logic* only.
+Racket-hand inference failed on 5 of 7 real clips: pass ``hand`` whenever
+the user has given it.
 Every threshold below is a starting value reasoned from the sibling
-tennis-form-coach project and docs/domain-standards.md, not a tuned or
-measured one. Do not quote any accuracy for this module.
+tennis-form-coach project and docs/domain-standards.md, except
+WRIST_GAP_BACKHAND, which was chosen on the 46 labeled hits (in-sample).
+Quote only the leave-one-clip-out figure (0.61), never the in-sample one.
 
 Why a rule baseline: with zero labels a learned model cannot be trained or
 validated; a transparent rule is debuggable and gives the future model a
@@ -39,6 +42,16 @@ shape/slice)
 4. Tie-breaker only: if the takeback signal is inside the margin, use the
    sign of the same lateral measure at contact (``contact_lateral``). If
    that is also ambiguous -> "unknown".
+5. Wrist gap (added 2026-10-07 after the first real-footage checks): the
+   median distance between the two wrists around contact, in torso lengths.
+   Below WRIST_GAP_BACKHAND both hands are on the racket (two-handed
+   backhand). It is used twice: it vetoes the serve gate (step 2), and it
+   answers, with fixed low confidence, whenever steps 3-4 would say
+   "unknown" for any reason other than missing contact landmarks (including
+   the edge-on case below). On the 46 owner-labeled hits with the hand given:
+   0.61 leave-one-clip-out (0.78 in-sample, not a usable figure); the
+   always-forehand baseline is 0.54. The gap window is +/-GAP_WINDOW_S, i.e.
+   +/-5 frames at 30 fps. Not good enough for the 0.85 target.
 
 2D limitation (state honestly): the sibling uses 3D world landmarks, so
 torso rotation (shoulder/hip yaw) is measured directly. Here landmarks are
@@ -48,14 +61,17 @@ torso rotation (shoulder/hip yaw) is measured directly. Here landmarks are
   * the wrist's lateral offset from the torso midline.
 Both depend on camera angle. Behind-the-baseline / front views work best;
 if the shoulders are near edge-on (side-on camera) the racket side cannot be
-resolved and the result is "unknown". Apparent shoulder width at contact is
+resolved, so the takeback rule abstains and the wrist-gap fallback (step 5)
+answers with low confidence. The serve gate runs before this check. Apparent shoulder width at contact is
 recorded in the result for debugging but does NOT influence the label.
 Perspective, camera roll, and a player rotating through 90 degrees can all
 flip the sign; none of this has been tested on real footage.
 
 Missing data: landmarks that are NaN, below MIN_VISIBILITY, or on frames
-with no detected player are treated as missing; if required landmarks are
-missing the result is label "unknown" with confidence 0 -- never a guess.
+with no detected player are treated as missing. If the racket wrist or torso
+is missing around contact, or no wrist gap can be measured, the result is
+"unknown" with confidence 0. If only the backswing is missing, the
+wrist-gap fallback answers (confidence GAP_CONF, reason says so).
 """
 from __future__ import annotations
 
@@ -75,7 +91,7 @@ FOREHAND, BACKHAND, OTHER, UNKNOWN = "forehand", "backhand", "other", "unknown"
 LABELS = (FOREHAND, BACKHAND, OTHER)           # valid ground-truth labels
 PREDICTIONS = (FOREHAND, BACKHAND, OTHER, UNKNOWN)
 
-# --- thresholds: all UNVALIDATED starting values -------------------------
+# --- thresholds: UNVALIDATED starting values, except WRIST_GAP_BACKHAND ----
 BACK_WINDOW_S = 0.6          # backswing search window before contact
 TIE_MARGIN = 0.15            # torso lengths; |lateral| below this is ambiguous
 CONF_SATURATION = 0.6        # |lateral| (torso lengths) at which confidence = 1
@@ -84,6 +100,14 @@ MIN_WINDOW_FRAMES = 3        # valid backswing frames needed
 SERVE_HEAD_THRESHOLD = 0.3   # wrist above nose, torso lengths (sibling value)
 SERVE_HIP_THRESHOLD = 1.3    # wrist above hip mid, torso lengths (sibling value)
 HAND_AMBIGUOUS_RATIO = 1.15  # peak-speed ratio below which inferred hand is shaky
+# Wrist gap: distance between the two wrists, torso lengths, median over
+# +/-GAP_WINDOW_S around contact. Two-handed backhands keep the wrists together;
+# a forehand's off arm is away. 0.30 is the balanced-accuracy cut on the 46
+# owner-labeled real hits (2026-10-07), i.e. IN-SAMPLE; leave-one-clip-out cuts
+# ranged 0.28-0.64, so it is camera-dependent (docs/real-footage-findings.md).
+WRIST_GAP_BACKHAND = 0.30
+GAP_WINDOW_S = 0.17          # ~5 frames at 30 fps
+GAP_CONF = 0.3               # fixed low confidence for gap-only answers
 
 
 @dataclasses.dataclass(frozen=True)
@@ -102,6 +126,7 @@ class StrokeClassification:
     wrist_above_hip: Optional[float] = None
     shoulder_width_ratio: Optional[float] = None   # debug only, unused by rule
     takeback_frame: Optional[int] = None
+    wrist_gap: Optional[float] = None     # torso lengths around contact; see WRIST_GAP_BACKHAND
     used_tiebreak: bool = False
     reason: str = ""
 
@@ -147,6 +172,28 @@ def _unknown(hand, hand_source, reason, **kw) -> StrokeClassification:
                                 reason=reason, **kw)
 
 
+def _wrist_gap(lm: np.ndarray, c: int, fps: float) -> Optional[float]:
+    """Median distance between the wrists (torso lengths) in +/-GAP_WINDOW_S of c."""
+    k = max(1, int(round(GAP_WINDOW_S * fps)))
+    w = slice(max(0, c - k), min(lm.shape[0], c + k + 1))
+    torso = np.linalg.norm((lm[w, L_SHOULDER] + lm[w, R_SHOULDER]) / 2
+                           - (lm[w, L_HIP] + lm[w, R_HIP]) / 2, axis=1)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        gap = np.linalg.norm(lm[w, L_WRIST] - lm[w, R_WRIST], axis=1) / torso
+    gap = gap[np.isfinite(gap)]
+    return float(np.median(gap)) if gap.size else None
+
+
+def _gap_fallback(unknown: StrokeClassification, gap: Optional[float]) -> StrokeClassification:
+    """Replace an "unknown" with a low-confidence FH/BH from the wrist gap."""
+    if gap is None:
+        return dataclasses.replace(unknown, wrist_gap=None)
+    label = BACKHAND if gap < WRIST_GAP_BACKHAND else FOREHAND
+    return dataclasses.replace(unknown, label=label, confidence=GAP_CONF,
+                               margin=abs(gap - WRIST_GAP_BACKHAND), wrist_gap=gap,
+                               reason=f"wrist-gap fallback ({unknown.reason})")
+
+
 def _near_valid(arr: np.ndarray, c: int, radius: int = 2) -> Optional[int]:
     """Closest frame to c (within radius) whose row is fully finite."""
     for d in range(radius + 1):
@@ -189,6 +236,15 @@ def classify_shot(
     n, c = lm.shape[0], int(event.contact_frame)
     if not (0 <= c < n):
         return _unknown(hand, src, f"contact_frame {c} outside clip (0..{n - 1})")
+    gap = _wrist_gap(lm, c, seq.fps)
+    result = _classify_rule(seq, lm, c, n, hand, src, ratio, rw_idx, gap)
+    if result.label == UNKNOWN and not result.reason.startswith("racket wrist/torso missing"):
+        return _gap_fallback(result, gap)
+    return dataclasses.replace(result, wrist_gap=gap)
+
+
+def _classify_rule(seq, lm, c, n, hand, src, ratio, rw_idx, gap) -> StrokeClassification:
+    """The original takeback-side rule (module docstring), plus the gap serve veto."""
 
     sh_l, sh_r = lm[:, L_SHOULDER], lm[:, R_SHOULDER]
     hip_l, hip_r = lm[:, L_HIP], lm[:, R_HIP]
@@ -199,16 +255,6 @@ def classify_shot(
     with np.errstate(invalid="ignore", divide="ignore"):
         u = np.stack([-axis[:, 1], axis[:, 0]], axis=1) / torso[:, None]   # (1,0) when upright
         spread = np.sum((sh_r - sh_l) * u, axis=1) / torso   # right-minus-left shoulder, torso lengths
-    if not np.any(np.isfinite(spread)):
-        return _unknown(hand, src, "torso landmarks missing for whole clip")
-    med_spread = float(np.nanmedian(spread))
-    if abs(med_spread) < MIN_SHOULDER_SPREAD:
-        return _unknown(hand, src, "shoulders near edge-on to camera; racket side unresolvable "
-                        "(camera-angle limit of 2D cues)")
-    # image direction (along u) of the racket side, then sign so lateral > 0 = racket side
-    racket_sign = (1.0 if med_spread > 0 else -1.0) * (1.0 if hand == "right" else -1.0)
-    with np.errstate(invalid="ignore", divide="ignore"):
-        lat = np.sum((wrist - hm) * u, axis=1) * racket_sign / torso
 
     fc = _near_valid(np.concatenate([wrist, hm, torso[:, None]], axis=1), c)
     if fc is None:
@@ -227,12 +273,27 @@ def classify_shot(
 
     ex_head = (ah - SERVE_HEAD_THRESHOLD) / 0.3 if ah is not None else -1.0
     ex_hip = (ahip - SERVE_HIP_THRESHOLD) / 0.5 if ahip is not None else -1.0
-    if max(ex_head, ex_hip) > 0:
+    # Serve veto: at a serve contact the off arm is down, far from the racket
+    # wrist; both wrists together means a two-handed groundstroke reaching high.
+    two_hands = gap is not None and gap < WRIST_GAP_BACKHAND
+    if max(ex_head, ex_hip) > 0 and not two_hands:
         score = float(min(1.0, max(ex_head, ex_hip)))
         return StrokeClassification(OTHER, _scale_conf(score, src, ratio), score, hand, src,
                                     reason="overhead/serve-like: racket wrist high at contact "
                                     "(interim 'other' class; scope pending product-manager)",
                                     **common)
+
+    # --- racket side in the image (after the serve gate, so side-on serves stay "other")
+    if not np.any(np.isfinite(spread)):
+        return _unknown(hand, src, "torso landmarks missing for whole clip", **common)
+    med_spread = float(np.nanmedian(spread))
+    if abs(med_spread) < MIN_SHOULDER_SPREAD:
+        return _unknown(hand, src, "shoulders near edge-on to camera; racket side unresolvable "
+                        "(camera-angle limit of 2D cues)", **common)
+    # image direction (along u) of the racket side, then sign so lateral > 0 = racket side
+    racket_sign = (1.0 if med_spread > 0 else -1.0) * (1.0 if hand == "right" else -1.0)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        lat = np.sum((wrist - hm) * u, axis=1) * racket_sign / torso
 
     # --- takeback frame: farthest from contact position within the window
     lo = max(0, c - int(round(BACK_WINDOW_S * seq.fps)))

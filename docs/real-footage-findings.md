@@ -610,3 +610,31 @@ Per clip, hand forced right: Sinner CC 7/9 (2 other), Sinner BH 2/4, Ruud 1/5.
 
 - The ball filter removed all 5 Sinner CC no-hits and lost no hit. It had no effect on Ruud (all 3 no-hits kept).
 - **Merge hurts on Ruud**: in both duplicate pairs the earlier event is the takeback (163, 468) and the real hit is 13–15 frames later. "Keep the earlier event" drops the hit. That was the opposite case of the forehand clips the window was chosen on. Keeping the faster or later peak would be the candidate fix, but it has not been tested.
+
+## 2026-10-07: racket hand as user input + wrist-gap cue (M3, experiment 1)
+
+Following the research summary (no surveyed tool infers the racket hand reliably; the one OSS pose classifier asks for a `--left-handed` flag), two changes:
+
+1. **Racket hand is a user input.** `POST /upload` takes an optional `racket_hand` (`left`/`right`). The worker labels FH/BH only with `--classify-strokes` **and** a given hand, and never infers it.
+2. **Wrist gap**: the median distance between the two wrists over ±5 frames (±0.17 s) around contact, in torso lengths. A small gap means both hands are on the racket.
+   - When the takeback rule would say "unknown", the gap answers with a fixed low confidence.
+   - It also vetoes the serve gate: 4 two-handed backhands had been called "other".
+
+Screening on the 46 hits (AUC, backhand gap < forehand gap): median ±5 frames **0.90**, median ±2 frames 0.77, minimum ±5 frames 0.57. Wrists overlap in 2D on many forehands, so the minimum is useless. Within the two mixed clips the gap separates the classes: Fed 1 backhands 0.20 and 0.45 vs forehands 0.71–0.91; Fons backhand 0.24 vs forehands 0.29–0.62.
+
+Results (oracle, 46 hits: 25 forehands, 21 backhands, hand given as right):
+
+| | before | after, threshold chosen on the same 46 (in-sample) | after, **leave one clip out** |
+|---|---|---|---|
+| accuracy | 0.43 | 0.78 | **0.61** (FH 13/25, BH 15/21) |
+
+Always answering forehand scores 0.54. With the hand inferred instead, the result is 0.35 held out, so the user-input hand matters more than the new cue.
+
+- **The threshold does not transfer across cameras.** The leave-one-clip-out cut ranged from 0.28 to 0.64 depending on which clip was held out. The shipped value, 0.30, is the in-sample cut. Per clip, held out: Fons 1/4, Sinner CC 9/9, Fed 2 5/13, Komura 6/6, Fed 1 4/5, Sinner BH 2/4, Ruud 1/5.
+- Five of the seven clips contain only one stroke type, so a per-clip number partly measures where the threshold landed, not whether the classifier tells the classes apart.
+- **M3 (≥ 0.85) is still not met.** Next candidates: YOLO racket detection for the racket side at contact, and MediaPipe world landmarks for the side-on clips.
+
+Code review fixes (same day):
+- The serve gate now runs **before** the edge-on check, so a side-on serve stays "other" and is not turned into a gap "forehand". That moved the in-sample figure from 0.80 to 0.78. The leave-one-clip-out figure is unchanged at 0.61.
+- `shots.stroke_confidence` and the API field `fh_bh_confidence` now distinguish wrist-gap guesses (0.3) from takeback-rule labels.
+- A classifier error no longer discards the detected shots.

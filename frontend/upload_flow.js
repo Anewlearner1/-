@@ -59,6 +59,10 @@ const ERROR_COPY_ZH = {
     "伺服器未能讀取您剛上傳的檔案，這通常是暫時性問題，與影片品質無關，請重新上傳一次；若持續發生請聯絡我們。",
   upload_not_found:
     "找不到這筆上傳紀錄，可能是連結有誤或已失效，與影片品質無關；請回到上傳頁重新上傳影片。",
+  // "invalid_racket_hand" (HTTP 422, POST /upload with a racket_hand other
+  // than left/right). NOT reachable yet: this screen sends no racket_hand.
+  // Copy per design/upload-flow.md §4.1 (pending ui-ux-designer review).
+  invalid_racket_hand: "持拍手設定無效，請選擇「右手」或「左手」後重新上傳；這與影片品質無關。",
 };
 
 const DEFAULT_ERROR_COPY_ZH =
