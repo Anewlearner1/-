@@ -58,15 +58,17 @@ MISSED = "missed"   # extra column in detected mode: no detected shot matched
 
 
 def save_landmarks(seq: PlayerLandmarkSequence, path: str | Path) -> None:
+    extra = {} if seq.world_landmarks is None else {"world": seq.world_landmarks}
     np.savez(path, landmarks=seq.landmarks, visibility=seq.visibility,
-             detected=seq.detected, fps=seq.fps, width=seq.width, height=seq.height)
+             detected=seq.detected, fps=seq.fps, width=seq.width, height=seq.height, **extra)
 
 
 def load_landmarks(path: str | Path) -> PlayerLandmarkSequence:
     z = np.load(path)
     return PlayerLandmarkSequence(
         landmarks=z["landmarks"], visibility=z["visibility"], detected=z["detected"],
-        fps=float(z["fps"]), width=int(z["width"]), height=int(z["height"]))
+        fps=float(z["fps"]), width=int(z["width"]), height=int(z["height"]),
+        world_landmarks=z["world"] if "world" in z else None)
 
 
 def evaluate_clip(label: dict, seq: PlayerLandmarkSequence, *, mode: str = "oracle",
@@ -128,11 +130,77 @@ def summarize(pairs: list[tuple[str, str]]) -> dict:
     }
 
 
+def _load_clips(label_paths, landmarks_dir, videos_dir):
+    """Yield (label, seq) for every label file that has stroke_labels."""
+    for lp in label_paths:
+        label = json.loads(Path(lp).read_text())
+        if "stroke_labels" not in label:
+            yield label, None
+            continue
+        vid = label["video_id"]
+        if landmarks_dir is not None and (Path(landmarks_dir) / f"{vid}.npz").exists():
+            seq = load_landmarks(Path(landmarks_dir) / f"{vid}.npz")
+        elif videos_dir is not None:
+            from cv.pose_overlay import extract_player_landmarks
+            seq = extract_player_landmarks(Path(videos_dir) / f"{vid}.mp4")
+        else:
+            raise FileNotFoundError(f"no landmarks for {vid}: need <landmarks-dir>/{vid}.npz or --videos-dir")
+        yield label, seq
+
+
+def _balanced_cut(items: list[tuple[float, str]]) -> Optional[float]:
+    """Midpoint threshold maximising balanced FH/BH accuracy (value >= cut -> forehand)."""
+    vals = sorted({v for v, _ in items})
+    fh = [v for v, t in items if t == "forehand"]
+    bh = [v for v, t in items if t == "backhand"]
+    if not fh or not bh or len(vals) < 2:
+        return None
+    best = None
+    for a, b in zip(vals, vals[1:]):
+        cut = (a + b) / 2
+        bal = (np.mean([v >= cut for v in fh]) + np.mean([v < cut for v in bh])) / 2
+        if best is None or bal > best[0]:
+            best = (bal, cut)
+    return best[1]
+
+
+def evaluate_loco_3d(label_paths: list[str | Path], *, landmarks_dir=None, videos_dir=None) -> dict:
+    """Leave-one-clip-out for the 3D cue: refit LATERAL_3D_FOREHAND_M on the
+    other clips (balanced accuracy), classify the held-out clip (oracle mode).
+    Restores the module constant afterwards."""
+    from ml import stroke_classification as sc
+    clips = [(l, s) for l, s in _load_clips(label_paths, landmarks_dir, videos_dir) if s is not None]
+    feats = []
+    for label, seq in clips:
+        hand = label.get("racket_hand") or (sc.detect_racket_hand(seq)[0] or "right")
+        feats.append([(sc._lateral_3d(seq, int(f), hand), t)
+                      for f, t in zip(label["contact_frames"], label["stroke_labels"])])
+    saved, pairs, per_clip, cuts = sc.LATERAL_3D_FOREHAND_M, [], {}, {}
+    try:
+        for i, (label, seq) in enumerate(clips):
+            train = [(v, t) for j, fs in enumerate(feats) if j != i for v, t in fs
+                     if v is not None and t in ("forehand", "backhand")]
+            cut = _balanced_cut(train)
+            sc.LATERAL_3D_FOREHAND_M = saved if cut is None else cut
+            p = evaluate_clip(label, seq)
+            pairs += p
+            per_clip[label["video_id"]] = f"{sum(t == q for t, q in p)}/{len(p)}"
+            cuts[label["video_id"]] = round(sc.LATERAL_3D_FOREHAND_M, 3)
+    finally:
+        sc.LATERAL_3D_FOREHAND_M = saved
+    out = summarize(pairs)
+    out.update(mode="oracle-loco-3d", per_clip=per_clip, fold_thresholds_m=cuts,
+               clips_with_world_landmarks=sum(s.world_landmarks is not None for _, s in clips),
+               clips_evaluated=len(clips))
+    return out
+
+
 def evaluate(label_paths: list[str | Path], *, landmarks_dir: Optional[str | Path] = None,
              videos_dir: Optional[str | Path] = None, mode: str = "oracle",
              tolerance: int = 5) -> dict:
     pairs: list[tuple[str, str]] = []
     skipped, sources, inferred_hand_clips, clips = [], set(), [], 0
+    world_clips = 0
     for lp in label_paths:
         label = json.loads(Path(lp).read_text())
         if "stroke_labels" not in label:
@@ -147,6 +215,7 @@ def evaluate(label_paths: list[str | Path], *, landmarks_dir: Optional[str | Pat
         else:
             raise FileNotFoundError(f"no landmarks for {vid}: need <landmarks-dir>/{vid}.npz or --videos-dir")
         sources.add(label.get("source", "unspecified"))
+        world_clips += seq.world_landmarks is not None
         if "racket_hand" not in label:
             inferred_hand_clips.append(vid)
         pairs += evaluate_clip(label, seq, mode=mode, tolerance=tolerance)
@@ -154,7 +223,7 @@ def evaluate(label_paths: list[str | Path], *, landmarks_dir: Optional[str | Pat
     out = summarize(pairs)
     out.update(mode=mode, clips_evaluated=clips, clips_skipped_no_stroke_labels=skipped,
                sources=sorted(sources), clips_with_inferred_hand=inferred_hand_clips,
-               real_footage=(sources == {"real"}))
+               real_footage=(sources == {"real"}), clips_with_world_landmarks=world_clips)
     return out
 
 
@@ -173,6 +242,8 @@ def format_report(res: dict) -> str:
         lines.append("truth\\pred  " + "  ".join(f"{c:>9}" for c in cols))
         for t, row in res["confusion"].items():
             lines.append(f"{t:<10}  " + "  ".join(f"{row[c]:>9}" for c in cols))
+    lines.append(f"world landmarks (3D cue) present for {res['clips_with_world_landmarks']}"
+                 f"/{res['clips_evaluated']} clip(s); the rest use the 2D rules only")
     if res["clips_with_inferred_hand"]:
         lines.append(f"racket hand INFERRED (no racket_hand label) for {len(res['clips_with_inferred_hand'])} clip(s)")
     return "\n".join(lines)
@@ -186,7 +257,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--mode", choices=["oracle", "detected"], default="oracle")
     ap.add_argument("--tolerance", type=int, default=5)
     ap.add_argument("--json", action="store_true", help="print raw JSON")
+    ap.add_argument("--loco-3d", action="store_true",
+                    help="leave-one-clip-out, refitting the 3D threshold per fold (oracle mode)")
     a = ap.parse_args(argv)
+    if a.loco_3d:
+        res = evaluate_loco_3d(a.labels, landmarks_dir=a.landmarks_dir, videos_dir=a.videos_dir)
+        print(json.dumps(res, indent=2))
+        return 0
     res = evaluate(a.labels, landmarks_dir=a.landmarks_dir, videos_dir=a.videos_dir,
                    mode=a.mode, tolerance=a.tolerance)
     print(json.dumps(res, indent=2) if a.json else format_report(res))

@@ -1,15 +1,17 @@
-"""M3: forehand / backhand classification of detected shots -- rule-based
-baseline, pose-only, 2D pixel-space.
+"""M3: forehand / backhand classification of detected shots -- rule-based,
+pose-only: 3D world landmarks when available (step 0), else 2D pixel space.
 
-STATUS: BELOW TARGET. Measured on 46 owner-labeled real hits (7 non-spec
-clips, docs/real-footage-findings.md); ADR 0002's 0.85 is not met. The
+STATUS: 0.93 leave-one-clip-out on 46 owner-labeled real hits WITH world
+landmarks and the hand given (7 non-spec clips, docs/real-footage-findings.md);
+2D-only input stays at 0.61. ADR 0002's 0.85 is only "met" on spec-compliant,
+unseen footage, which has not been tested. The
 synthetic tests (tests/test_stroke_classification.py) check *logic* only.
 Racket-hand inference failed on 5 of 7 real clips: pass ``hand`` whenever
 the user has given it.
 Every threshold below is a starting value reasoned from the sibling
 tennis-form-coach project and docs/domain-standards.md, except
-WRIST_GAP_BACKHAND, which was chosen on the 46 labeled hits (in-sample).
-Quote only the leave-one-clip-out figure (0.61), never the in-sample one.
+WRIST_GAP_BACKHAND and LATERAL_3D_FOREHAND_M, which were chosen on the 46
+labeled hits. Quote only leave-one-clip-out figures, never in-sample ones.
 
 Why a rule baseline: with zero labels a learned model cannot be trained or
 validated; a transparent rule is debuggable and gives the future model a
@@ -42,6 +44,14 @@ shape/slice)
 4. Tie-breaker only: if the takeback signal is inside the margin, use the
    sign of the same lateral measure at contact (``contact_lateral``). If
    that is also ambiguous -> "unknown".
+0. 3D cue (added 2026-10-07, used whenever world landmarks are present and
+   the serve gate did not fire): mean racket-wrist offset toward the racket
+   side along the hip axis in the body's horizontal frame, in metres
+   (LATERAL_3D_FOREHAND_M). Pooled AUC 0.99; leave-one-clip-out 0.96 on the
+   46 hits. Steps 3-4 and the gap fallback run only when the 3D cue is
+   unavailable (no world landmarks, or too few valid frames before contact);
+   the gap's serve veto in step 2 always applies. No label is given when the
+   2D wrist/torso is missing at contact, because the serve gate cannot run.
 5. Wrist gap (added 2026-10-07 after the first real-footage checks): the
    median distance between the two wrists around contact, in torso lengths.
    Below WRIST_GAP_BACKHAND both hands are on the racket (two-handed
@@ -108,6 +118,17 @@ HAND_AMBIGUOUS_RATIO = 1.15  # peak-speed ratio below which inferred hand is sha
 WRIST_GAP_BACKHAND = 0.30
 GAP_WINDOW_S = 0.17          # ~5 frames at 30 fps
 GAP_CONF = 0.3               # fixed low confidence for gap-only answers
+# 3D cue (step 0): mean racket-wrist offset along the hip axis, metres, in the
+# body's own horizontal frame (MediaPipe world landmarks), over the window
+# [-LAT3D_WINDOW_S, -LAT3D_GAP_S] before contact. >= threshold -> forehand.
+# 0.28 m is the balanced-accuracy cut on all 46 owner-labeled hits (the same
+# rule picked 0.28-0.33 m in each leave-one-clip-out fold);
+# LOCO accuracy 44/46 = 0.96 (docs/real-footage-findings.md).
+LATERAL_3D_FOREHAND_M = 0.28
+LAT3D_WINDOW_S = 0.4
+LAT3D_GAP_S = 0.07
+LAT3D_CONF_SATURATION_M = 0.15   # |offset - threshold| at which confidence = 1
+LAT3D_MIN_FRAMES = 3
 
 
 @dataclasses.dataclass(frozen=True)
@@ -127,6 +148,7 @@ class StrokeClassification:
     shoulder_width_ratio: Optional[float] = None   # debug only, unused by rule
     takeback_frame: Optional[int] = None
     wrist_gap: Optional[float] = None     # torso lengths around contact; see WRIST_GAP_BACKHAND
+    lateral_3d: Optional[float] = None    # metres; see LATERAL_3D_FOREHAND_M
     used_tiebreak: bool = False
     reason: str = ""
 
@@ -184,6 +206,41 @@ def _wrist_gap(lm: np.ndarray, c: int, fps: float) -> Optional[float]:
     return float(np.median(gap)) if gap.size else None
 
 
+def _lateral_3d(seq: PlayerLandmarkSequence, c: int, hand: str) -> Optional[float]:
+    """Mean racket-wrist offset (m) toward the racket side along the hip axis.
+
+    World landmarks are hip-centred metres, so this does not depend on how
+    large the player is in the image. Their axes follow the CAMERA, not
+    gravity: zeroing y projects onto the camera's x-z plane, which is only
+    horizontal for a roughly level camera (all 7 test clips; a tilted rig is
+    untested). Frames that are undetected or below MIN_VISIBILITY (the same
+    mask as the 2D path) are skipped. None without world landmarks or with
+    fewer than LAT3D_MIN_FRAMES frames.
+    """
+    world = getattr(seq, "world_landmarks", None)
+    if world is None:
+        return None
+    w = np.asarray(world, dtype=float)
+    lo = max(0, c - int(round(LAT3D_WINDOW_S * seq.fps)))
+    hi = min(w.shape[0], c - int(round(LAT3D_GAP_S * seq.fps)) + 1)
+    wrist_idx = R_WRIST if hand == "right" else L_WRIST
+    side = 1.0 if hand == "right" else -1.0
+    vals = []
+    for f in range(lo, hi):
+        if not np.asarray(seq.detected)[f] or np.max(np.asarray(seq.visibility)[f]) < MIN_VISIBILITY:
+            continue
+        pts = w[f, [L_HIP, R_HIP, wrist_idx]]
+        if not np.all(np.isfinite(pts)):
+            continue
+        axis = pts[1] - pts[0]
+        axis[1] = 0.0
+        n = np.linalg.norm(axis)
+        if n < 1e-6:
+            continue
+        vals.append(side * float(np.dot(pts[2] - (pts[0] + pts[1]) / 2, axis / n)))
+    return float(np.mean(vals)) if len(vals) >= LAT3D_MIN_FRAMES else None
+
+
 def _gap_fallback(unknown: StrokeClassification, gap: Optional[float]) -> StrokeClassification:
     """Replace an "unknown" with a low-confidence FH/BH from the wrist gap."""
     if gap is None:
@@ -214,7 +271,8 @@ def classify_shot(
     """Classify one detected shot as forehand / backhand / other / unknown.
 
     Args:
-        seq: landmarks for the whole clip (2D pixel space).
+        seq: landmarks for the whole clip (2D pixels, plus optional world
+            landmarks used by the 3D cue).
         event: shot from ``detect_shots``; only ``contact_frame`` is used
             (``event.wrist`` is intentionally ignored -- see module docs).
         hand: "left" or "right" racket hand; inferred from the clip when None.
@@ -237,8 +295,19 @@ def classify_shot(
     if not (0 <= c < n):
         return _unknown(hand, src, f"contact_frame {c} outside clip (0..{n - 1})")
     gap = _wrist_gap(lm, c, seq.fps)
+    lat3 = _lateral_3d(seq, c, hand)
     result = _classify_rule(seq, lm, c, n, hand, src, ratio, rw_idx, gap)
-    if result.label == UNKNOWN and not result.reason.startswith("racket wrist/torso missing"):
+    contact_missing = result.reason.startswith("racket wrist/torso missing")
+    if result.label == OTHER or contact_missing:  # serve gate wins; no contact pose -> no guess
+        return dataclasses.replace(result, wrist_gap=gap, lateral_3d=lat3)
+    if lat3 is not None:                         # step 0: 3D cue when world landmarks exist
+        margin = lat3 - LATERAL_3D_FOREHAND_M
+        conf = _scale_conf(min(1.0, abs(margin) / LAT3D_CONF_SATURATION_M), src, ratio)
+        return dataclasses.replace(
+            result, label=FOREHAND if margin >= 0 else BACKHAND, confidence=conf,
+            margin=abs(margin), wrist_gap=gap, lateral_3d=lat3, used_tiebreak=False,
+            reason="3D racket-wrist offset along hip axis (world landmarks)")
+    if result.label == UNKNOWN:
         return _gap_fallback(result, gap)
     return dataclasses.replace(result, wrist_gap=gap)
 

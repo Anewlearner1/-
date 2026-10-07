@@ -140,6 +140,6 @@ ball filter and duplicate merge), replaces that upload's `shots`, sets `done`; a
 sets `failed` and stores the message in `uploads.error` (returned by `GET /uploads/{id}` as
 `error`). Forehand/backhand: only with `--classify-strokes` and a `racket_hand` given at upload
 (never inferred); otherwise `fh_bh_label` stays null. Off by default because the classifier is
-below the M3 target (0.61 leave-one-clip-out on 46 real hits). Not done: ball speed, retries, GPU routing, scheduling, billing. Run on a real video
+only validated on 46 non-spec real hits (0.93 leave-one-clip-out with world landmarks). Not done: ball speed, retries, GPU routing, scheduling, billing. Run on a real video
 (Fons practice, queued directly past the 60 fps gate): `done`, 8 shots with merge 0.5 s, in
 the order and frames of the earlier standalone run.

@@ -11,8 +11,9 @@ exception marks it "failed" and stores the message in `uploads.error`.
 Forehand/backhand: only with ``--classify-strokes`` AND a racket hand the user
 gave at upload. Otherwise `stroke_label` stays NULL ("尚未分析"); the hand is
 never inferred here because inference failed on 5 of 7 real clips. Even with
-the hand, the classifier is below the M3 target (0.61 leave-one-clip-out on 46
-real hits), which is why the flag is off by default.
+the hand, the classifier is only validated on 46 non-spec real hits (0.93
+leave-one-clip-out with world landmarks, which extraction now provides), so
+the flag stays off by default until spec-compliant footage is tested.
 
 What it does NOT do: estimate ball speed; run on a GPU; retry; schedule or bill. Shot detection
 quality is what `docs/real-footage-findings.md` measured: pose only is about

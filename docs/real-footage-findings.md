@@ -674,3 +674,42 @@ The racket adds nothing over the wrist. Swapping the takeback rule for the mean 
 **PM decision (ADR 0005 authority):**
 - Stop tuning rules on these 46 hits. Every change since the hand fix moves the result by one or two hits, which is noise at n = 46 with 5 of 7 clips containing a single stroke type.
 - The next real gain needs **data**: clips with both forehands and backhands, a left-handed player, and the camera the product will support.
+
+## 2026-10-07: 3D cue from MediaPipe world landmarks (M3, experiment 3): 0.93 held out
+
+**Why Ruud failed in 2D.** The camera is behind and to Ruud's right. On the backhand he turns his back almost fully to the camera, so in 2D the racket appears on his "forehand side" and the left/right ordering flips. At the contact frame f99 the pose is also corrupted: the right wrist and shoulder landmarks jump onto the legs. This is a limit of 2D, not a bug.
+
+**Change.** `extract_player_landmarks` now also returns MediaPipe `pose_world_landmarks` (metres, hip-centred; depth is a monocular estimate). Re-extracting all 7 clips reproduced the cached 2D landmarks exactly (max difference 0.0).
+- Cue: the racket wrist's mean offset toward the racket side along the hip axis, projected to the horizontal plane, over −0.4 to −0.07 s before contact.
+- Same window as the 2D mean-lateral test, which was fixed before looking at 3D.
+
+| | AUC (FH > BH) | leave one clip out | threshold per fold |
+|---|---|---|---|
+| shoulder axis | 0.99 | 41/46 = 0.89 | 0.22–0.30 m |
+| **hip axis** | 0.99 | **44/46 = 0.96** | **0.28–0.33 m** |
+| integrated classifier (serve gate, then 3D; 2D rules only when the 3D cue is unavailable), hand given | | **43/46 = 0.93** | shipped 0.28 m |
+| same, hand inferred | | 39/46 = 0.85 | |
+
+Previous best (2D, hand given): 0.61. Always forehand: 0.54. Per clip, held out with the hand given: Fons 3/4, Sinner CC 9/9, Fed 2 13/13, Komura 6/6, Fed 1 4/5, Sinner BH 4/4, Ruud 4/5. The side-on clips (Fons, Fed 2: 6/17 in 2D) are now 16/17.
+
+Remaining 3 errors (in-sample at 0.28 m):
+- Fons f95, forehand → "other": the serve gate fired (wrist high at contact). This frame is in the owner's player numbering, about 3 frames off.
+- Fed 1 f180, forehand at 0.265 m → backhand.
+- Ruud f481, backhand at 0.313 m → forehand.
+
+Honest limits:
+- Two axes were tried and the better one kept (mild selection).
+- All 7 players are right-handed; the left-hand path is mirrored and tested only on synthetic data.
+- Hits come from labels (oracle). Sinner and Ruud labels are detector frames.
+- The clips are not spec-compliant.
+
+So this is **the first result above 0.85, but it is not an ADR 0002 acceptance result**. That needs ≥ 10 unseen spec-compliant clips.
+
+Also noted: `PlayerLandmarkSequence.visibility` is the candidate's mean visibility repeated for every landmark, not per-landmark. It is left as is because every number above depends on it.
+
+Review fixes (same day):
+- **The 3D cue no longer answers when the 2D wrist or torso is missing at contact.** In that case the serve gate cannot run, so the result is "unknown" and not a full-confidence label.
+- The 3D path now uses the same visibility mask as the 2D path. Results are unchanged.
+- The docstring now says world axes follow the camera, not gravity: zeroing y is horizontal only for a roughly level camera, and a tilted rig is untested.
+- **Reproduce:** `python -m ml.eval_stroke_classification labeling/labels/*.json --videos-dir data/videos --loco-3d`, with `racket_hand` set in the labels. The cached landmark files are not in the repo, so `--videos-dir` re-extracts them. This gives 43/46 with fold thresholds of 0.277–0.325 m.
+- The normal report now says how many clips had world landmarks. A cache from before world landmarks existed silently fell back to the 0.61 2D rules.
