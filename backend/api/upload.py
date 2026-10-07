@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, File, Form, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from backend import db
 from backend.upload_quality import (
@@ -166,7 +166,7 @@ def _not_found(upload_id: str) -> JSONResponse:
 
 @app.get("/uploads/{upload_id}")
 async def get_upload_status(upload_id: str) -> JSONResponse:
-    """Status + stored quality report. Status is "queued" until a worker exists."""
+    """Status + stored quality report. Status stays "queued" until a worker runs."""
     row = db.get_upload(upload_id)
     if row is None:
         return _not_found(upload_id)
@@ -186,3 +186,20 @@ async def get_upload_shots(upload_id: str) -> JSONResponse:
         status_code=200,
         content={"upload_id": upload_id, "shot_count": len(shots), "shots": shots},
     )
+
+
+_VIDEO_TYPES = {".mp4": "video/mp4", ".m4v": "video/mp4", ".mov": "video/quicktime",
+                ".webm": "video/webm", ".mkv": "video/x-matroska", ".avi": "video/x-msvideo"}
+
+
+@app.get("/uploads/{upload_id}/video")
+async def get_upload_video(upload_id: str):
+    """The stored video, for dashboard playback (M6). Starlette's FileResponse
+    answers HTTP Range requests, so the browser can seek. The path comes from
+    the DB row the API itself wrote, never from the request. 404
+    upload_not_found if the id or the stored file is missing."""
+    path = db.stored_path(upload_id)
+    if path is None or not Path(path).is_file():
+        return _not_found(upload_id)
+    media = _VIDEO_TYPES.get(Path(path).suffix.lower(), "application/octet-stream")
+    return FileResponse(path, media_type=media)

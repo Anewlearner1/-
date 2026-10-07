@@ -39,6 +39,7 @@ each field/status value; read it before changing this response shape.
   `ball_speed_kmh`, `source`. `fh_bh_label` / `ball_speed_kmh` are JSON
   `null` (= dashboard "尚未分析", never 0) until analyzed. `shots` is filled by
   `db.insert_shots_from_result()`, called by the worker (`backend/worker.py`).
+- `GET /uploads/{upload_id}/video` -> the stored video (FileResponse with HTTP Range support, so the dashboard can seek); 404 `upload_not_found` if the id or the stored file is missing.
 - Unknown id -> 404 `{"error": "upload_not_found", "detail": ...}`.
 - `POST /upload` takes an optional form field `racket_hand` (`left`/`right`), stored in
   `uploads.racket_hand` and returned by `GET /uploads/{id}`; anything else -> 422

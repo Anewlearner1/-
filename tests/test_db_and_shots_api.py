@@ -94,3 +94,19 @@ def test_insert_from_shot_timing_result_round_trip(tmp_path, monkeypatch):
         assert s["peak_speed"] == pytest.approx(e.peak_speed)
         assert s["wrist"] == e.wrist
         assert s["source"] == "ml.shot_timing.detect_shots"
+
+
+def test_video_endpoint_serves_the_stored_file_with_range_support(tmp_path, client):
+    v = _video(tmp_path, "good.mp4", write_steady_textured_video, fps=60, n_frames=90)
+    uid = _post(client, v).json()["upload_id"]
+    full = client.get(f"/uploads/{uid}/video")
+    assert full.status_code == 200 and full.headers["content-type"] == "video/mp4"
+    assert full.content == v.read_bytes()
+    part = client.get(f"/uploads/{uid}/video", headers={"Range": "bytes=0-99"})
+    assert part.status_code == 206 and len(part.content) == 100
+
+
+def test_video_endpoint_404_for_unknown_id_or_missing_file(tmp_path, client):
+    assert client.get("/uploads/nope/video").json()["error"] == "upload_not_found"
+    uid = db.create_upload("x.mp4", str(tmp_path / "gone.mp4"), {"passed": True})
+    assert client.get(f"/uploads/{uid}/video").status_code == 404
