@@ -7,5 +7,13 @@
     200,
     578,
     645
-  ]
+  ],
+  "stroke_labels": [
+    "forehand",
+    "forehand",
+    "forehand",
+    "backhand",
+    "backhand"
+  ],
+  "source": "real"
 }

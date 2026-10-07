@@ -519,3 +519,48 @@ Komura (a clip with clothing the colour rule mistakes for a ball) was added.
 Against ADR 0002 (precision and recall both >= 0.90 on >= 10 unseen
 spec-compliant clips) recall 0.86 is short, and none of these clips is
 spec-compliant, so this is not an acceptance result.
+
+## 2026-10-07: first forehand/backhand check against owner labels (M3)
+
+Owner labeled the 28 confirmed hits from sheets M1-M28: **backhand = 3** (Fons
+4th hit, Fed 1 4th and 5th), **forehand = 25**. Labels stored as `stroke_labels`
+in each `labeling/labels/*.json` (aligned with `contact_frames`). Fons labels are
+still in the owner's player numbering (about 3 frames off the decoder); the
+classifier reads a window, so this should matter little.
+
+`python -m ml.eval_stroke_classification` (oracle mode: classified at the
+labeled contact frame), hand inferred, unknown counts as wrong:
+
+| | forehand | backhand | other | unknown |
+|---|---|---|---|---|
+| truth forehand (25) | 2 | 7 | 0 | 16 |
+| truth backhand (3) | 0 | 2 | 0 | 1 |
+
+Accuracy **0.14** (4/28), coverage 0.39 (11/28 answered). ADR 0002 asks for >= 0.85
+on located hits: **not met**, and these clips are not spec-compliant anyway.
+
+Diagnosis (same hits, racket hand forced instead of inferred, nothing tuned):
+
+| Clip | inferred hand | result as shipped | hand = right |
+|---|---|---|---|
+| Fons (4) | left | 4 unknown | 4 unknown |
+| Fed 1 (5) | right | 4 right, 1 wrong | 4 right, 1 wrong |
+| Fed 2 (13) | right | 13 unknown | 13 unknown |
+| Komura (6) | **left** | **6 wrong** | **6 right** |
+
+- **Hand inference is wrong on Komura** (behind view, all forehands): the peak-wrist-speed
+  rule picked "left", which turns every answer around. With the hand forced to right
+  it is 6/6. Hand inference has now failed on Komura and on IMG_3173 (behind views).
+- **The classifier abstains on side-on clips** (17 of 28: all of Fons and Fed 2), by
+  design when the 2D shoulders are edge-on. That is most of the labeled data.
+- With the hand forced to right: 10 correct, 1 wrong, 17 unknown (10/11 = 0.91 when it
+  answers, coverage 0.39, accuracy over all hits 0.36).
+- **The labeled set cannot show it is useful**: 89% of hits are forehands, so
+  answering "forehand" every time scores 25/28 = 0.89, above any of the figures above.
+  Only 3 backhands exist; the one answered Fed 1 error may be one of them.
+- The rule was written against synthetic footage; this is its first real test.
+
+Consequence for M3: not met; the cheapest likely fix is to take the racket hand as an
+input (asked at upload) instead of inferring it, plus a different cue for side-on
+views. Not implemented. More backhand footage is needed before any accuracy figure
+for backhands means anything.

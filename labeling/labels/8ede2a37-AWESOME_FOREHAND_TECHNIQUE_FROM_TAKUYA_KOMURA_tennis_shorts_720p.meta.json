@@ -8,5 +8,6 @@
     175,
     415
   ],
-  "notes": "Owner gave hit frames for K1 30, K2 111, K4 257, K5 329, K6 404, K8 478 and K9 479 (K9 recorded as the same stroke as K8: one frame apart). K7 (detection 415) has no hit: it is 11 frames after the K6 hit at 404, a follow-through duplicate. K3 (detection 175): the owner first said it had a hit, then corrected that a ball is visible but there is NO racket-ball contact, so it is a non-contact. All nine detections now have an owner verdict. Hits outside the nine detections were not reported, so the list is not marked complete and true recall is unknown."
+  "notes": "Owner gave hit frames for K1 30, K2 111, K4 257, K5 329, K6 404, K8 478 and K9 479 (K9 recorded as the same stroke as K8: one frame apart). K7 (detection 415) has no hit: it is 11 frames after the K6 hit at 404, a follow-through duplicate. K3 (detection 175): the owner first said it had a hit, then corrected that a ball is visible but there is NO racket-ball contact, so it is a non-contact. All nine detections now have an owner verdict. Hits outside the nine detections were not reported, so the list is not marked complete and true recall is unknown.",
+  "stroke_labels_note": "Owner, 2026-10-07, from 7-tile strips of each confirmed hit (sheets M1-M28): backhand = M4 (Fons 4th hit), M8 and M9 (Fed 1 4th and 5th); every other hit forehand. racket_hand not stated."
 }

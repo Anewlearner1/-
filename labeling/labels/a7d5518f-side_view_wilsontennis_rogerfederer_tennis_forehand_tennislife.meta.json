@@ -11,5 +11,6 @@
     "200": "owner confirmed a hit (stated as 204 in the owner's player); ball track reverses at decoder frame 200-201",
     "180": "owner confirmed a hit (stated as 183 in the owner's player); no usable ball track, frame ESTIMATED as 183 minus the ~3-frame player/decoder offset seen at 129 and 200"
   },
-  "notes": "The owner's player numbers frames about 3 higher than OpenCV's decoder for this clip (variable-frame-rate mp4 likely). Earlier 'no contact' answers for 570/580 and 640/651 were given in player numbering and were reversed once the owner judged decoder frames directly. Detections at 62, 162, 445 are not contacts (owner); 589 is the follow-through of the 578 hit."
+  "notes": "The owner's player numbers frames about 3 higher than OpenCV's decoder for this clip (variable-frame-rate mp4 likely). Earlier 'no contact' answers for 570/580 and 640/651 were given in player numbering and were reversed once the owner judged decoder frames directly. Detections at 62, 162, 445 are not contacts (owner); 589 is the follow-through of the 578 hit.",
+  "stroke_labels_note": "Owner, 2026-10-07, from 7-tile strips of each confirmed hit (sheets M1-M28): backhand = M4 (Fons 4th hit), M8 and M9 (Fed 1 4th and 5th); every other hit forehand. racket_hand not stated."
 }

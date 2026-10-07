@@ -6,5 +6,12 @@
     95,
     164,
     237
-  ]
+  ],
+  "stroke_labels": [
+    "forehand",
+    "forehand",
+    "forehand",
+    "backhand"
+  ],
+  "source": "real"
 }

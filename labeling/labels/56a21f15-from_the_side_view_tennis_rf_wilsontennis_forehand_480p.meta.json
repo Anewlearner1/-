@@ -5,5 +5,6 @@
   "frame_numbering": "opencv_decoder",
   "reviewer": "project owner",
   "date": "2026-10-07",
-  "notes": "Hits located by the owner on every-frame decoder strips: 52, 128, 419, 504, 576, 648, 954. Hits judged on every-3rd-frame strips, recorded at their detection frames (not located contacts): 198, 275, 345, 731, 802, 874. The other 10 detections (83, 167, 301, 312, 377, 430, 511, 539, 604, 770) were judged 'no hit' on every-3rd-frame strips only; the assistant's own earlier review also read them as stance, cuts or follow-through. Hits outside the 23 detections were not reported: recall unknown."
+  "notes": "Hits located by the owner on every-frame decoder strips: 52, 128, 419, 504, 576, 648, 954. Hits judged on every-3rd-frame strips, recorded at their detection frames (not located contacts): 198, 275, 345, 731, 802, 874. The other 10 detections (83, 167, 301, 312, 377, 430, 511, 539, 604, 770) were judged 'no hit' on every-3rd-frame strips only; the assistant's own earlier review also read them as stance, cuts or follow-through. Hits outside the 23 detections were not reported: recall unknown.",
+  "stroke_labels_note": "Owner, 2026-10-07, from 7-tile strips of each confirmed hit (sheets M1-M28): backhand = M4 (Fons 4th hit), M8 and M9 (Fed 1 4th and 5th); every other hit forehand. racket_hand not stated."
 }

@@ -4,5 +4,6 @@
   "reviewer": "project owner",
   "date": "2026-10-07",
   "notes": "Owner listed 26, 95, 164 and then added 237 in reply to a request to list ALL contacts in this clip, so the list is treated as complete. This inference was not stated outright; revert to complete=false if wrong. Frame-numbering base (0 vs 1) and the tool used were not stated.",
-  "frame_numbering": "owner_player (NOT the decoder; likely about 3 frames higher, unverified for this clip)"
+  "frame_numbering": "owner_player (NOT the decoder; likely about 3 frames higher, unverified for this clip)",
+  "stroke_labels_note": "Owner, 2026-10-07, from 7-tile strips of each confirmed hit (sheets M1-M28): backhand = M4 (Fons 4th hit), M8 and M9 (Fed 1 4th and 5th); every other hit forehand. racket_hand not stated."
 }
