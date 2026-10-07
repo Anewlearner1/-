@@ -105,3 +105,14 @@ def test_missing_video_raises_file_not_found(tmp_path):
 
     with pytest.raises(FileNotFoundError):
         gpo(tmp_path / "does_not_exist.mp4", tmp_path / "out.mp4", progress=False)
+
+
+def test_world_landmarks_are_carried_per_candidate_when_present():
+    from types import SimpleNamespace as P
+    from cv.pose_overlay import _candidates_from_result
+    img = [[P(x=0.1 * i, y=0.2, visibility=0.9) for i in range(1, 4)]]
+    world = [[P(x=0.01 * i, y=-0.5, z=0.3) for i in range(1, 4)]]
+    with_world = _candidates_from_result(img, 100, 50, world)[0]
+    assert with_world.world_landmarks.shape == (3, 3)
+    assert with_world.world_landmarks[0].tolist() == pytest.approx([0.01, -0.5, 0.3])
+    assert _candidates_from_result(img, 100, 50)[0].world_landmarks is None

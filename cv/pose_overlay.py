@@ -149,11 +149,15 @@ class PoseOverlayResult:
 
 
 # --------------------------------------------------------------- candidates
-def _candidates_from_result(pose_landmarks_list, width: int, height: int
-                             ) -> list[PersonCandidate]:
+def _candidates_from_result(pose_landmarks_list, width: int, height: int,
+                             world_landmarks_list=None) -> list[PersonCandidate]:
     """Build PersonCandidate objects from one frame's MediaPipe result."""
     candidates = []
-    for landmarks in pose_landmarks_list:
+    world_landmarks_list = list(world_landmarks_list or [])
+    for i, landmarks in enumerate(pose_landmarks_list):
+        world = None
+        if i < len(world_landmarks_list):
+            world = np.array([[p.x, p.y, p.z] for p in world_landmarks_list[i]], float)
         pts = np.array([[p.x * width, p.y * height] for p in landmarks], float)
         vis = np.array([getattr(p, "visibility", 1.0) for p in landmarks], float)
         x_min, y_min = pts.min(axis=0)
@@ -162,6 +166,7 @@ def _candidates_from_result(pose_landmarks_list, width: int, height: int
             bbox=(float(x_min), float(y_min), float(x_max), float(y_max)),
             landmarks=pts,
             mean_visibility=float(vis.mean()) if vis.size else 0.0,
+            world_landmarks=world,
         ))
     return candidates
 
@@ -266,7 +271,8 @@ def _run_pose_pipeline(
                 result = landmarker.detect_for_video(mp_image, timestamp_ms)
 
                 candidates = _candidates_from_result(
-                    result.pose_landmarks or [], width, height)
+                    result.pose_landmarks or [], width, height,
+                    getattr(result, "pose_world_landmarks", None))
                 chosen_idx = selector.select(candidates)
                 if chosen_idx is not None:
                     frames_with_pose += 1
@@ -405,6 +411,13 @@ class PlayerLandmarkSequence:
         fps: source video frame rate.
         width: source video frame width in pixels.
         height: source video frame height in pixels.
+        world_landmarks: optional (frame_count, NUM_LANDMARKS, 3) MediaPipe
+            world coordinates (metres, hip-centred; depth is a monocular
+            estimate). All-NaN on frames without a player; None if unavailable.
+
+    Note: ``visibility`` repeats the candidate's MEAN visibility for every
+    landmark (not per-landmark). Kept as-is because every measured result so
+    far depends on it; see docs/real-footage-findings.md 2026-10-07.
     """
 
     landmarks: np.ndarray
@@ -413,6 +426,7 @@ class PlayerLandmarkSequence:
     fps: float
     width: int
     height: int
+    world_landmarks: Optional[np.ndarray] = None
 
     @property
     def frame_count(self) -> int:
@@ -450,6 +464,7 @@ def extract_player_landmarks(
     landmarks: list[np.ndarray] = []
     visibility: list[np.ndarray] = []
     detected: list[bool] = []
+    world: list[np.ndarray] = []
 
     def on_frame(_frame_idx, _frame, candidates, chosen_idx):
         if chosen_idx is not None:
@@ -460,12 +475,18 @@ def extract_player_landmarks(
                 padded[:pts.shape[0]] = pts
                 pts = padded
             landmarks.append(pts.copy())
+            w = np.full((NUM_LANDMARKS, 3), np.nan)
+            if cand.world_landmarks is not None:
+                n = min(NUM_LANDMARKS, cand.world_landmarks.shape[0])
+                w[:n] = cand.world_landmarks[:n]
+            world.append(w)
             visibility.append(np.full(NUM_LANDMARKS, cand.mean_visibility))
             detected.append(True)
         else:
             landmarks.append(np.full((NUM_LANDMARKS, 2), np.nan))
             visibility.append(np.zeros(NUM_LANDMARKS))
             detected.append(False)
+            world.append(np.full((NUM_LANDMARKS, 3), np.nan))
 
     frame_count, fps, width, height, _frames_with_pose = _run_pose_pipeline(
         video_path,
@@ -486,4 +507,5 @@ def extract_player_landmarks(
         fps=fps,
         width=width,
         height=height,
+        world_landmarks=np.stack(world, axis=0) if world else None,
     )

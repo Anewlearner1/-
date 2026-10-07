@@ -69,6 +69,9 @@ class PersonCandidate:
     bbox: tuple[float, float, float, float]
     landmarks: np.ndarray
     mean_visibility: float
+    # Optional MediaPipe pose_world_landmarks: (N, 3) metres, hip-centred,
+    # monocular depth estimate. None when the source has no 3D output.
+    world_landmarks: Optional[np.ndarray] = None
 
     @property
     def area(self) -> float:
