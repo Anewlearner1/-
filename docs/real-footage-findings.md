@@ -564,3 +564,20 @@ Consequence for M3: not met; the cheapest likely fix is to take the racket hand 
 input (asked at upload) instead of inferring it, plus a different cue for side-on
 views. Not implemented. More backhand footage is needed before any accuracy figure
 for backhands means anything.
+
+## 2026-10-07: three backhand-focused clips, assistant's provisional classification (owner check pending)
+
+Clips (all 720x1280, ~30 fps, fail the 60 fps gate; hand assumed RIGHT for both players, not confirmed): Sinner cross-court practice (B1-B17), Sinner backhand practice (B18-B22, cuts between views), Ruud backhand rally (B23-B31). 31 pose-only detections, every-2nd-frame strips of +/-8 frames. The classifier's predictions were deliberately not looked at before this labeling.
+
+These are the ASSISTANT's reading of small strips, not ground truth; the owner has not yet checked them and no hit frame was located.
+
+| Assistant label | Events |
+|---|---|
+| Backhand hit, confident | B2, B4, B7, B8, B11, B12, B13, B14, B16, B18, B24 |
+| Backhand hit, probable | B20, B21, B22, B26, B28, B29, B31 |
+| No hit | B3 (follow-through 12 frames after B2), B6 (takeback for the next hit), B9 (follow-through of B8), B15 and B19 (camera cuts), B17 and B23 (follow-through of a hit before the window) |
+| Unsure | B1, B5, B10, B25 (looks like the early part of B26's stroke), B27 (camera pans away), B30 (13 frames before B31, probably one stroke) |
+
+No forehands were seen in these clips.
+
+Event frames: B1 sinner_cc f19, B2 sinner_cc f37, B3 sinner_cc f49, B4 sinner_cc f110, B5 sinner_cc f193, B6 sinner_cc f227, B7 sinner_cc f257, B8 sinner_cc f336, B9 sinner_cc f348, B10 sinner_cc f386, B11 sinner_cc f409, B12 sinner_cc f484, B13 sinner_cc f553, B14 sinner_cc f632, B15 sinner_cc f661, B16 sinner_cc f700, B17 sinner_cc f788, B18 sinner_bh f110, B19 sinner_bh f190, B20 sinner_bh f258, B21 sinner_bh f405, B22 sinner_bh f484, B23 ruud f24, B24 ruud f99, B25 ruud f163, B26 ruud f178, B27 ruud f328, B28 ruud f374, B29 ruud f395, B30 ruud f468, B31 ruud f481.
