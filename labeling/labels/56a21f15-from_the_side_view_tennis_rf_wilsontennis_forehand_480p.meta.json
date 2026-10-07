@@ -5,5 +5,5 @@
   "frame_numbering": "opencv_decoder",
   "reviewer": "project owner",
   "date": "2026-10-07",
-  "notes": "Hits: E1 f52, E3 f128, E13 f504, E16 f576 (owner judged on every-frame decoder strips; these four had been called 'no hit' on every-3rd-frame strips that skipped the contact frame), plus E5, E6, E9, E19, E21, E22 (judged on every-3rd-frame strips; their contact_frames are the detection frames 198, 275, 345, 731, 802, 874, not located contacts). The remaining 13 detections were called 'no hit' on every-3rd-frame strips only, so some could be hidden hits. Missed hits outside the 23 strips were not reported: recall unknown."
+  "notes": "Hits located by the owner on every-frame decoder strips: 52, 128, 419, 504, 576, 648, 954. Hits judged on every-3rd-frame strips, recorded at their detection frames (not located contacts): 198, 275, 345, 731, 802, 874. The other 10 detections (83, 167, 301, 312, 377, 430, 511, 539, 604, 770) were judged 'no hit' on every-3rd-frame strips only; the assistant's own earlier review also read them as stance, cuts or follow-through. Hits outside the 23 detections were not reported: recall unknown."
 }

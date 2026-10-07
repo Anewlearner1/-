@@ -375,3 +375,34 @@ filter did not pick up). Still open: the other 13 "no hit" detections were
 judged on every-3rd-frame strips only; E11 (418), E18 (646) and E23 (952) were
 sent back as every-frame strips. Recall for Fed 2 is unknown (hits outside the
 23 detections not reported).
+
+### Update: E11, E18, E23 are hits too (owner, every-frame strips: 419, 648, 954)
+Fed 2 now has 13 known hits. Current results, one-to-one, +/-10 frames,
+"recall" = share of the owner's known hits (hits no detection covered were
+never reported, so true recall may be lower):
+
+| Clip | Method | TP | FP | FN | precision | recall |
+|---|---|---|---|---|---|---|
+| Fons | pose only | 4 | 6 | 0 | 0.40 | 1.00 |
+| Fons | + ball rule | 4 | 0 | 0 | 1.00 | 1.00 |
+| Fed 1 | pose only | 5 | 4 | 0 | 0.56 | 1.00 |
+| Fed 1 | + ball rule | 4 | 0 | 1 | 1.00 | 0.80 |
+| **Fed 2 (held out)** | pose only | 13 | 10 | 0 | 0.57 | 1.00 |
+| **Fed 2 (held out)** | + ball rule | 10 | 1 | 3 | **0.91** | **0.77** |
+| All 3 | pose only | 22 | 20 | 0 | 0.52 | 1.00 |
+| All 3 | + ball rule | 18 | 1 | 4 | 0.95 | 0.82 |
+
+Reading it:
+- Pose alone finds every known hit but about half its detections are not hits
+  (ready-stance movement, cuts, follow-through duplicates).
+- The ball-colour rule removes almost all of those (20 -> 1 false), at the cost
+  of about 1 hit in 5: all 4 misses (Fed 1 180; Fed 2 419, 731, 954) are hits
+  where the colour filter found no ball blob near a wrist. The one remaining
+  false positive is a follow-through duplicate (Fed 2 511 after the 504 hit).
+- Every number is from three short, side-view, 30 fps social-media practice
+  clips with a large player and a clearly coloured ball. Not representative of
+  the target camera setup (behind the baseline, small player) or of rallies
+  where balls pass players who do not hit them.
+- Label caveat: 13 of 42 detections were judged "no hit" only on every-3rd-
+  frame strips (Fed 2's 10, plus none elsewhere: Fons/Fed 1 labels came from
+  frame lists). Earlier sparse strips hid 7 Fed 2 hits, so a few more may hide.
