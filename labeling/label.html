@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rally AI 擊球標記</title>
+<style>
+  :root { --bg:#f6f7f9; --fg:#1b1f24; --muted:#5b6470; --card:#fff; --line:#d8dde3;
+          --accent:#0b62c4; --warn-bg:#fff3cd; --warn-fg:#7a4b00; --ok:#1d7a3a; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.5 "Microsoft JhengHei","Noto Sans TC",system-ui,sans-serif;
+         background:var(--bg); color:var(--fg); }
+  header { padding:10px 16px; background:#1b1f24; color:#fff; }
+  header h1 { margin:0; font-size:18px; }
+  main { display:grid; grid-template-columns: 260px 1fr 300px; gap:12px; padding:12px; }
+  @media (max-width: 1100px) { main { grid-template-columns: 1fr; } }
+  section { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:10px; min-width:0; }
+  h2 { font-size:15px; margin:0 0 8px; }
+  #video-list { list-style:none; margin:0; padding:0; max-height:70vh; overflow:auto; }
+  #video-list button { width:100%; text-align:left; padding:6px 8px; margin-bottom:4px; border:1px solid var(--line);
+                       background:#fff; border-radius:6px; cursor:pointer; word-break:break-all; font:inherit; }
+  #video-list button[aria-current="true"] { border-color:var(--accent); background:#e8f1fc; }
+  .badge { display:inline-block; font-size:12px; padding:0 6px; border-radius:10px; background:#e6e9ee; color:var(--muted); margin-left:4px; }
+  .badge.done { background:#d9f2e1; color:var(--ok); }
+  .badge.old { background:var(--warn-bg); color:var(--warn-fg); }
+  #player-wrap { position:relative; background:#000; border-radius:6px; overflow:hidden; }
+  video { display:block; width:100%; max-height:70vh; background:#000; }
+  #frame-display { font-size:34px; font-weight:700; margin:8px 0 2px; font-variant-numeric: tabular-nums; }
+  #frame-sub { color:var(--muted); font-size:13px; }
+  .warn { background:var(--warn-bg); color:var(--warn-fg); padding:6px 10px; border-radius:6px; margin:6px 0; }
+  .controls { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-top:8px; }
+  .controls button, #save { font:inherit; padding:5px 10px; border-radius:6px; border:1px solid var(--line); background:#fff; cursor:pointer; }
+  #save { background:var(--accent); color:#fff; border-color:var(--accent); width:100%; padding:8px; font-weight:700; }
+  #scrub { width:100%; }
+  #marks { list-style:none; padding:0; margin:0; max-height:40vh; overflow:auto; }
+  #marks li button { width:100%; text-align:left; font:inherit; padding:4px 8px; border:1px solid var(--line); background:#fff; border-radius:6px; margin-bottom:3px; cursor:pointer; font-variant-numeric: tabular-nums; }
+  #marks li button.here { border-color:var(--accent); background:#e8f1fc; }
+  .help { font-size:13px; color:var(--muted); }
+  .help kbd { background:#eef0f3; border:1px solid var(--line); border-radius:4px; padding:0 4px; font-size:12px; color:var(--fg); }
+  fieldset { border:1px solid var(--line); border-radius:6px; margin:8px 0; }
+  #save-status { min-height:1.5em; margin-top:6px; font-size:13px; }
+</style>
+</head>
+<body>
+<header><h1>Rally AI 擊球標記（解碼器幀號）</h1></header>
+<main>
+  <section aria-labelledby="h-videos">
+    <h2 id="h-videos">影片</h2>
+    <ul id="video-list"></ul>
+    <p id="video-dir" class="help"></p>
+  </section>
+
+  <section aria-labelledby="h-player">
+    <h2 id="h-player">播放</h2>
+    <p id="no-video" class="help">請從左邊選一支影片。</p>
+    <div id="player" hidden>
+      <div id="player-wrap"><video id="video" muted playsinline preload="auto"></video></div>
+      <div id="frame-display" aria-live="polite">解碼器幀 #<span id="frame-num">—</span></div>
+      <div id="frame-sub"></div>
+      <div id="barcode-warning" class="warn" hidden>讀不到畫面上的幀號條碼，現在顯示的幀號不可信。請暫停或按 ←/→ 再試；不要在此時標記。</div>
+      <div id="load-status" class="help"></div>
+      <input id="scrub" type="range" min="0" max="0" value="0" aria-label="快速拖曳到某一幀">
+      <div class="controls">
+        <button id="btn-back10" type="button">« 10</button>
+        <button id="btn-back1" type="button">‹ 1</button>
+        <button id="btn-play" type="button">播放 / 暫停</button>
+        <button id="btn-fwd1" type="button">1 ›</button>
+        <button id="btn-fwd10" type="button">10 »</button>
+        <label>跳到幀 <input id="goto" type="number" min="0" step="1" style="width:6em"></label>
+        <button id="btn-goto" type="button">跳</button>
+      </div>
+      <div class="help" style="margin-top:8px">
+        <b>操作：</b>
+        <kbd>←</kbd>/<kbd>→</kbd> 前後一幀，<kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>→</kbd> 前後十幀，
+        <kbd>空白鍵</kbd> 播放/暫停；
+        <kbd>F</kbd> 正拍、<kbd>B</kbd> 反拍、<kbd>O</kbd> 其他（在目前這一幀標記），
+        <kbd>Delete</kbd> 刪除離目前最近的標記。<br>
+        請標「球拍碰到球」的那一幀。畫面上方的黑白條碼與左下角的
+        「decoder frame N」就是解碼器幀號，標記一律用這個號碼，不用播放器的時間或幀數。
+        每一拍都要標，包括練習中的每一球；不確定是正拍還是反拍就按 <kbd>O</kbd>。
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-marks">
+    <h2 id="h-marks">標記（<span id="mark-count">0</span>）</h2>
+    <div id="label-warning" class="warn" hidden></div>
+    <ul id="marks"></ul>
+    <fieldset>
+      <legend>持拍手</legend>
+      <label><input type="radio" name="hand" value="right"> 右手</label>
+      <label><input type="radio" name="hand" value="left"> 左手</label>
+    </fieldset>
+    <label><input id="complete" type="checkbox"> 我已從頭看到尾，所有擊球都標了</label>
+    <p class="help">沒勾這格也能存，但會存成「未完成」。</p>
+    <button id="save" type="button">儲存</button>
+    <div id="save-status" role="status"></div>
+  </section>
+</main>
+<script src="label_logic.js"></script>
+<script src="label.js"></script>
+</body>
+</html>

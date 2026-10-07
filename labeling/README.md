@@ -1,4 +1,77 @@
-# labeling/ — semi-automated shot-timing labeling tool
+# labeling/ — 擊球標記工具
+
+## 給擁有者：用網頁標記每一拍（2026-10-07 新增，建議用這個）
+
+這個網頁讓你在自己的 Windows 電腦上，用 Chrome 或 Edge 標出影片裡**每一次球拍碰到球**
+的那一幀，以及正拍／反拍／其他。標記一律用 **OpenCV 解碼器的幀號**：網頁播放的是一份
+特製的「標記用影片」，每一幀上方有一條黑白條碼、左下角有「decoder frame N」，網頁直接從
+畫面讀條碼來決定現在是第幾幀，不相信瀏覽器的播放時間（之前用播放器幀數標記，差了約 3 幀，
+見 `docs/real-footage-findings.md`）。
+
+### 啟動（Windows）
+
+1. 第一次使用：在專案資料夾開「命令提示字元」或 PowerShell，執行
+   `pip install -r requirements.txt`。
+2. 把影片放進 `data\videos\`（或執行 `python -m backend.library ingest 影片路徑`），
+   或者指定別的資料夾：
+   - 命令提示字元：`set RALLY_VIDEO_DIR=D:\網球影片`
+   - PowerShell：`$env:RALLY_VIDEO_DIR="D:\網球影片"`
+3. 在專案資料夾執行：`python -m labeling.label_server`
+   （換埠號：`python -m labeling.label_server --port 8002`）
+4. 用 Chrome 或 Edge 開 `http://localhost:8001/`。
+5. 點左邊的影片。第一次開某支影片要先產生標記用影片，長影片可能要等一兩分鐘
+   （存在 `data\label_proxies\`，之後直接用）。
+
+### 按鍵
+
+| 按鍵 | 作用 |
+|---|---|
+| `←` / `→` | 上一幀／下一幀 |
+| `Shift` + `←` / `→` | 往前／往後 10 幀 |
+| 空白鍵 | 播放／暫停 |
+| `F` | 在目前這一幀標「正拍」 |
+| `B` | 在目前這一幀標「反拍」 |
+| `O` | 在目前這一幀標「其他」（不確定、截擊、發球等） |
+| `Delete` | 刪除離目前這一幀最近的標記 |
+
+也可以在「跳到幀」輸入幀號，或點右邊標記清單裡的一項跳過去。
+
+### 標記步驟
+
+1. 從頭播放或逐幀看，每次球拍碰到球就停在那一幀，按 `F`／`B`／`O`。
+   同一幀再按一次別的鍵會改成新的種類。
+2. 大字「解碼器幀 #N」就是要記的幀號。若出現黃色警告「讀不到幀號條碼」，
+   先按 `←`／`→` 讓它重新讀到，再標記（讀不到時網頁不會讓你標）。
+3. 選持拍手（右手／左手）。
+4. **從頭看到尾、每一拍都標了**，才勾「我已從頭看到尾，所有擊球都標了」。
+   沒勾也能存，但會存成「未完成」，評估時不能拿來算漏抓。
+5. 按「儲存」。檔案寫到 `labeling\labels\<影片檔名>.json`，旁邊另有
+   `<影片檔名>.meta.json` 記錄是否完成、持拍手、日期與幀號制（`opencv_decoder`）。
+   覆蓋舊檔前，舊檔會先備份到 `data\label_backups\`。
+6. 已經有舊標記、但幀號不是解碼器幀號的影片，清單上會標「舊標記（非解碼器幀號）」，
+   開啟時不會載入那些舊幀號，請重新標記。
+
+### 給開發者
+
+- `labeling/proxy.py`：`make_label_proxy(video_path, out_path)` 以 `cv2.VideoCapture`
+  逐幀解碼，縮到長邊不超過 960 px，在畫面上方**加**一條 32 px 高的條碼（不蓋住畫面），
+  寫成 VP8 WebM，寫完會再解碼一次檢查每一幀的條碼都等於幀序號。條碼：全寬平均分成 28 格
+  純黑白，第 0 格白、第 1 格黑（參考），第 2–21 格是幀號 20 位元（高位在前，白 = 1），
+  第 22–25 格是 4 位元檢查碼（幀號五個 4 位元段的 XOR），第 26 格白、第 27 格黑。
+  讀取時取每格中央、以黑白參考格的中點為門檻，檢查碼不符就當作讀不到。
+  `labeling/label_logic.js` 實作同樣的讀法，兩邊要一起改。
+- `labeling/label_server.py`：FastAPI。`GET /api/videos`、`GET /api/videos/{name}/info`、
+  `GET /api/videos/{name}/proxy`（支援 Range）、`GET/POST /api/videos/{name}/label`。
+  名稱一律經過 `backend.library.resolve_video`。重複或超出範圍的幀號、fps 不符回 422。
+- 標記檔格式：`{video_id, fps, contact_frames, stroke_labels, racket_hand, source: "real"}`，
+  `ml/eval_shot_timing.load_label` 與 `ml/eval_stroke_classification` 都讀得到。
+- 測試：`tests/test_label_proxy.py`、`tests/test_label_server.py`、
+  `tests/test_label_logic.js`、`tests/test_label_browser.py`（真的開 Chromium，逐幀與跳幀後比對
+  網頁顯示的幀號、螢幕截圖上的條碼與要求的幀號；沒有 Chromium 時略過）。
+
+---
+
+## Older tool: `label_shots.py` (semi-automated, English notes)
 
 **Status: tooling only. No real video has been labeled with this tool yet.**
 Nothing in this directory is a delivered dataset — there is no
