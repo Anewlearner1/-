@@ -73,3 +73,19 @@ def test_fons_label_is_now_complete_with_four_contacts():
     from pathlib import Path
     lab = load_label(Path("labeling/labels/1436d55e-Fonseca_side_view_practice_session.json"))
     assert lab["complete"] is True and lab["contact_frames"] == [26, 95, 164, 237]
+
+
+def test_owner_rejected_frames_count_as_known_false_positives_even_when_partial(tmp_path):
+    p = tmp_path / "clip.json"
+    p.write_text(json.dumps({"video_id": "clip", "fps": 30.0, "contact_frames": [60]}))
+    (tmp_path / "clip.meta.json").write_text(
+        json.dumps({"complete": False, "not_contacts": [200]}))
+    res = evaluate_detected(load_label(p), [58, 197, 400])
+    assert res["known_false_positives"] == [197]
+    assert "within_5" not in res          # still no precision for partial labels
+
+
+def test_no_not_contacts_means_no_known_false_positive_field(tmp_path):
+    p = tmp_path / "clip.json"
+    p.write_text(json.dumps({"video_id": "clip", "fps": 30.0, "contact_frames": [60]}))
+    assert "known_false_positives" not in evaluate_detected(load_label(p), [58])

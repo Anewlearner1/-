@@ -26,6 +26,7 @@ def load_label(path: Path) -> dict:
     meta_path = Path(path).with_suffix("").with_suffix(".meta.json")
     meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
     data["complete"] = bool(meta.get("complete", True))
+    data["not_contacts"] = [int(x) for x in meta.get("not_contacts", [])]
     return data
 
 
@@ -77,6 +78,13 @@ def evaluate_detected(label: dict, detected: Sequence[int],
     result = {"video_id": label["video_id"], "complete_labels": label["complete"],
               "n_detected": len(detected), "matches": matches,
               **summarize(matches, tolerances)}
+    if label["not_contacts"]:
+        # Frames the owner said are NOT ball contacts: a detection landing on
+        # one is a known false positive even when the contact list is partial.
+        tol = max(tolerances)
+        hit = sorted(int(d) for d in detected
+                     if any(abs(d - n) <= tol for n in label["not_contacts"]))
+        result["known_false_positives"] = hit
     if label["complete"]:
         for tol in tolerances:
             m = match_one_to_one(sorted(detected), label["contact_frames"], tol)

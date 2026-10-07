@@ -165,3 +165,22 @@ positive), 4 true strokes:
   and a duplicate is better removed by merging nearby events than by a
   threshold. In-sample lead only; no filter implemented. Needs a second clip
   with a complete owner label to test on held-out data.
+
+## 2026-10-07 (erratum): "swing" is not "shot"
+
+For Fed 1 the owner reported seeing no ball at frames 570, 589 and 651. Those
+are stored as `not_contacts` in the label's meta (cause not stated: practice
+swings, or a ball too small to see at 360x640). The assistant had labeled all
+three as real strokes from arm motion alone.
+
+- A pose-only detector counts swings, and a swing without a ball looks the same
+  as a hit. Telling them apart needs a ball signal (planned ball tracking, M4/M5)
+  or footage where the ball is reliably visible. This is the plan's own reason
+  for fusing ball trajectory with swing speed.
+- Reclassifying those three as not-a-shot, the assistant's provisional
+  precision drops from 0.51 to 0.44 (default mode) and 0.54 to 0.51 (`hand="auto"`).
+  Still provisional and still the assistant's labels, except for those three.
+- Detections that landed on owner-rejected frames: default mode 3 of 9 on Fed 1
+  (570, 589, 651); `hand="auto"` 1 of 7 (589). Reported by
+  `ml.eval_shot_timing` as `known_false_positives`, a lower bound on false
+  positives while the contact list is partial.
