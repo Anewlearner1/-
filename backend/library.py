@@ -138,7 +138,8 @@ def probe(path: Path) -> VideoInfo:
     )
 
 
-def scan_one(path: Path, *, shots: bool = False) -> dict:
+def scan_one(path: Path, *, shots: bool = False, ball_filter: bool = False,
+             merge_within_s: Optional[float] = None) -> dict:
     """Probe one video, run the upload quality gate, optionally detect shots.
 
     Never raises for a bad video: failure is reported in the returned dict so
@@ -167,19 +168,27 @@ def scan_one(path: Path, *, shots: bool = False) -> dict:
         from ml.shot_timing import detect_shots
 
         seq = extract_player_landmarks(path, progress=False)
-        found = detect_shots(seq)
+        found = detect_shots(seq, merge_within_s=merge_within_s)
+        if ball_filter:
+            from ml.ball_filter import filter_shots_with_ball
+            found, _ = filter_shots_with_ball(path, seq, found)
         result["shots"] = {
             "pose_detection_rate": round(seq.pose_detection_rate, 3),
             "shot_count": found.shot_count,
             "contact_frames": [e.contact_frame for e in found.events],
-            "note": ("pose-speed peaks only, unvalidated: no labeled clips "
-                     "exist and non-stroke arm motion gives false positives"),
+            "ball_filter": ball_filter,
+            "merge_within_s": merge_within_s,
+            "note": ("estimates from pose (and the ball-colour filter if on); validated "
+                     "only on three side-view practice clips, see "
+                     "docs/real-footage-findings.md"),
         }
     return result
 
 
-def scan(directory: Optional[Path] = None, *, shots: bool = False) -> list[dict]:
-    return [scan_one(p, shots=shots) for p in list_videos(directory)]
+def scan(directory: Optional[Path] = None, *, shots: bool = False, ball_filter: bool = False,
+         merge_within_s: Optional[float] = None) -> list[dict]:
+    return [scan_one(p, shots=shots, ball_filter=ball_filter, merge_within_s=merge_within_s)
+            for p in list_videos(directory)]
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -190,7 +199,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_scan = sub.add_parser("scan", help="probe and quality-check every video")
     p_scan.add_argument("--shots", action="store_true",
                         help="also run pose + shot detection (slow)")
+    p_scan.add_argument("--ball-filter", action="store_true",
+                        help="with --shots: keep only shots with a ball seen near a wrist")
+    p_scan.add_argument("--merge-within-s", type=float, default=None,
+                        help="with --shots: merge shots closer than this many seconds")
     args = parser.parse_args(argv)
+    if args.cmd == "scan" and (args.ball_filter or args.merge_within_s) and not args.shots:
+        parser.error("--ball-filter and --merge-within-s require --shots")
 
     if args.cmd == "ingest":
         status = 0
@@ -203,7 +218,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         return status
 
     print(json.dumps({"video_dir": str(video_dir()),
-                      "videos": scan(shots=args.shots)},
+                      "videos": scan(shots=args.shots, ball_filter=args.ball_filter,
+                                     merge_within_s=args.merge_within_s)},
                      ensure_ascii=False, indent=2))
     return 0
 

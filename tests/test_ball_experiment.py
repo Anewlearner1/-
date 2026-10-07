@@ -1,8 +1,9 @@
-"""Unit tests for the colour blob finder in ml/ball_experiment.py (synthetic frames only)."""
+"""Unit tests for the ball blob finder and trajectory helpers (synthetic frames only)."""
 import cv2
 import numpy as np
 
-from ml.ball_experiment import find_ball_blob, horizontal_reversal, nearest_ball_x
+from ml.ball_experiment import horizontal_reversal, nearest_ball_x
+from ml.ball_filter import find_ball_blob
 
 BALL_BGR = (40, 230, 230)     # yellow-green in BGR
 WRIST = (100.0, 100.0)

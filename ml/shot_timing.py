@@ -155,6 +155,7 @@ def detect_shots(
     min_separation_s: float = 0.35,
     smooth_window_s: float = 0.15,
     hand: str | None = None,
+    merge_within_s: float | None = None,
 ) -> ShotTimingResult:
     """Detect shot (contact) events from a player's landmark time series.
 
@@ -180,10 +181,22 @@ def detect_shots(
             Following one wrist stops the off hand's own swings (it moves a
             lot in a forehand) from registering as shots.
 
+        merge_within_s: if set, an event this soon after the previously kept
+            one is dropped and the earlier kept. One swing often produces a
+            second peak during its follow-through; contact comes first, so the
+            earlier event is the one to keep. Off by default: on labelled
+            footage the follow-through duplicates sat 10-19 frames after the
+            hit while two genuine hits were as close as 20 frames apart, so a
+            window long enough to catch every duplicate also merges real hits
+            (see docs/real-footage-findings.md). 0.5 s caught 3 of 4 duplicates
+            there without merging any hit.
+
     Returns:
         ShotTimingResult with one ShotEvent per detected contact, ordered by
         frame, plus the smoothed speed signal they were found on.
     """
+    if merge_within_s is not None and merge_within_s <= 0:
+        raise ValueError("merge_within_s must be positive")
     if hand not in (None, "auto", "left", "right"):
         raise ValueError(f"hand must be None, 'auto', 'left' or 'right', got {hand!r}")
     fps = seq.fps
@@ -229,4 +242,11 @@ def detect_shots(
         )
         for p in sorted(int(p) for p in peaks)
     ]
+    if merge_within_s is not None:
+        merged: list[ShotEvent] = []
+        for e in events:
+            if merged and e.contact_frame - merged[-1].contact_frame <= merge_within_s * fps:
+                continue
+            merged.append(e)
+        events = merged
     return ShotTimingResult(events=events, speed=smoothed, fps=fps)

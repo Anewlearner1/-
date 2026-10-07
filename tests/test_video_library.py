@@ -99,3 +99,10 @@ def test_cli_scan_prints_json(folder, tmp_path, capsys):
 def test_cli_ingest_reports_failures_with_nonzero_exit(folder, tmp_path, capsys):
     assert library.main(["ingest", str(tmp_path / "missing.mp4")]) == 1
     assert "skip" in capsys.readouterr().err
+
+
+def test_ball_filter_and_merge_flags_require_shots(folder, capsys):
+    with pytest.raises(SystemExit):
+        library.main(["scan", "--ball-filter"])
+    with pytest.raises(SystemExit):
+        library.main(["scan", "--merge-within-s", "0.5"])

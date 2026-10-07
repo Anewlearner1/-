@@ -406,3 +406,24 @@ Reading it:
 - Label caveat: 10 of 42 detections (all on Fed 2) were judged "no hit" only on
   every-3rd-frame strips; Fons and Fed 1 labels came from frame lists. Sparse
   strips had hidden 7 Fed 2 hits, so a few more may still be hidden.
+
+## 2026-10-07: ball filter and merge shipped as options (off by default)
+
+`ml/ball_filter.py` (the ball-colour rule, unchanged) and
+`detect_shots(merge_within_s=...)`. Re-running all three labeled clips through
+the shipped code reproduced the experiment numbers exactly.
+
+| Setting | TP | FP | FN | precision | recall |
+|---|---|---|---|---|---|
+| pose only | 22 | 20 | 0 | 0.52 | 1.00 |
+| merge 0.5 s | 22 | 15 | 0 | 0.59 | 1.00 |
+| ball filter | 18 | 1 | 4 | 0.95 | 0.82 |
+| ball filter + merge 0.5 s | 18 | 0 | 4 | 1.00 | 0.82 |
+
+- Merge at 0.5 s removed 3 of the 4 follow-through duplicates (Fons 171, Fed 2
+  430 and 511) and two other non-hits (Fons 73, Fed 2 312) without removing any
+  hit. It cannot catch Fed 1 589 (19 frames after its hit) without also
+  risking genuine hits 20 frames apart.
+- The window was chosen with these clips in view, and the ball rule was built
+  on two of them, so the combined 1.00 / 0.82 is optimistic. Fed 2 alone, held
+  out for the ball rule only: 1.00 / 0.77 with both options.

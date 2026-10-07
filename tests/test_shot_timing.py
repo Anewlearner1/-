@@ -135,3 +135,21 @@ def test_infer_racket_hand_uses_peak_speed():
 def test_an_invalid_hand_value_is_rejected():
     with pytest.raises(ValueError):
         detect_shots(_two_hand_sequence(), hand="both")
+
+
+# ------------------------------------------------------------ merge_within_s
+def test_merge_drops_a_follow_through_peak_and_keeps_the_earlier_event():
+    seq = synth_landmark_sequence([60, 72], fps=FPS, n_frames=160)
+    assert detect_shots(seq).shot_count == 2                 # 0.4 s apart: both found
+    merged = detect_shots(seq, merge_within_s=0.5)
+    assert [e.contact_frame for e in merged.events] == pytest.approx([60], abs=2)
+
+
+def test_merge_keeps_hits_further_apart_than_the_window():
+    seq = synth_landmark_sequence([60, 80], fps=FPS, n_frames=160)
+    assert detect_shots(seq, merge_within_s=0.5).shot_count == 2   # 0.67 s apart
+
+
+def test_merge_within_s_must_be_positive():
+    with pytest.raises(ValueError):
+        detect_shots(synth_landmark_sequence([60], fps=FPS), merge_within_s=0)

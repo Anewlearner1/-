@@ -102,6 +102,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("labels", nargs="+", type=Path)
     parser.add_argument("--videos-dir", type=Path, required=True)
     parser.add_argument("--hand", choices=["auto", "left", "right"], default=None)
+    parser.add_argument("--merge-within-s", type=float, default=None,
+                        help="drop an event this soon after the previous one (see detect_shots)")
+    parser.add_argument("--ball-filter", action="store_true",
+                        help="keep only events with a ball blob near a wrist (ml/ball_filter.py)")
     args = parser.parse_args(argv)
 
     from cv.pose_overlay import extract_player_landmarks
@@ -116,7 +120,11 @@ def main(argv: Optional[list[str]] = None) -> int:
                   file=sys.stderr)
             continue
         seq = extract_player_landmarks(video, progress=False)
-        found = [e.contact_frame for e in detect_shots(seq, hand=args.hand).events]
+        result = detect_shots(seq, hand=args.hand, merge_within_s=args.merge_within_s)
+        if args.ball_filter:
+            from ml.ball_filter import filter_shots_with_ball
+            result, _ = filter_shots_with_ball(video, seq, result)
+        found = [e.contact_frame for e in result.events]
         results.append(evaluate_detected(label, found))
     print(json.dumps(results, indent=2))
     return 0 if results else 1

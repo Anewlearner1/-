@@ -191,3 +191,33 @@ base unverified: a lead, not a calibration. See `docs/real-footage-findings.md`.
 contact" note above is most likely an artefact: the owner's frame numbers came
 from a media player that numbers frames about 3 higher than OpenCV's decoder on
 these clips. See `docs/real-footage-findings.md` ("RESOLUTION").
+
+## Optional shot filters (added 2026-10-07)
+
+Both are off by default; turn them on per call or per CLI run.
+
+- `detect_shots(..., merge_within_s=0.5)` drops an event that comes within
+  0.5 s of the previously kept one (keeps the earlier: contact precedes the
+  follow-through peak).
+- `ml.ball_filter.filter_shots_with_ball(video, seq, result)` keeps an event
+  only if a tennis-ball-coloured blob appears within 2 torso lengths of a wrist
+  in at least one of the +/-8 frames around it.
+
+CLI: `python -m backend.library scan --shots [--ball-filter] [--merge-within-s 0.5]`
+and `python -m ml.eval_shot_timing ... [--ball-filter] [--merge-within-s 0.5]`.
+
+On three side-view practice clips with owner labels (22 hits, 42 pose
+detections):
+
+| Setting | precision | recall |
+|---|---|---|
+| pose only | 0.52 | 1.00 |
+| merge 0.5 s | 0.59 | 1.00 |
+| ball filter | 0.95 | 0.82 |
+| ball filter + merge 0.5 s | 1.00 | 0.82 |
+
+Why off by default: the 0.5 s window was chosen by looking at these same clips
+(follow-through duplicates sat 10-19 frames after the hit, genuine hits as
+close as 20 frames apart); the ball filter was built on two of the clips and
+held out on only one; nothing was tested on the behind-the-baseline target
+setup or on rallies. Details: `docs/real-footage-findings.md`.
