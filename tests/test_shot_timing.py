@@ -93,3 +93,45 @@ def test_detection_gaps_do_not_register_as_false_shots():
     result = detect_shots(seq)
     assert result.shot_count == 1
     assert result.events[0].contact_frame == pytest.approx(80, abs=2)
+
+
+# ------------------------------------------------- racket-hand-only mode
+def _two_hand_sequence():
+    """Right wrist swings hard at 60 and 140; the left wrist makes a smaller
+    swing at 100 that no stroke accompanies (an off-hand flourish)."""
+    right = synth_landmark_sequence([60, 140], fps=FPS, n_frames=220,
+                                    wrist_idx=R_WRIST, amplitude_px=300.0)
+    left = synth_landmark_sequence([100], fps=FPS, n_frames=220,
+                                   wrist_idx=L_WRIST, amplitude_px=200.0)
+    right.landmarks[:, L_WRIST] = left.landmarks[:, L_WRIST]
+    return right
+
+
+def test_default_mode_counts_the_off_hand_flourish_as_a_shot():
+    """Documents the over-firing the hand option exists to fix."""
+    assert detect_shots(_two_hand_sequence()).shot_count == 3
+
+
+@pytest.mark.parametrize("hand", ["right", "auto"])
+def test_following_the_racket_hand_ignores_the_off_hand(hand):
+    result = detect_shots(_two_hand_sequence(), hand=hand)
+    assert [e.contact_frame for e in result.events] == pytest.approx([60, 140], abs=2)
+    assert all(e.wrist == "right" for e in result.events)
+
+
+def test_following_the_wrong_hand_finds_only_that_hands_motion():
+    result = detect_shots(_two_hand_sequence(), hand="left")
+    assert [e.contact_frame for e in result.events] == pytest.approx([100], abs=2)
+
+
+def test_infer_racket_hand_uses_peak_speed():
+    from ml.shot_timing import infer_racket_hand
+    assert infer_racket_hand(_two_hand_sequence()) == "right"
+    left_handed = synth_landmark_sequence([60, 140], fps=FPS, n_frames=220,
+                                          wrist_idx=L_WRIST)
+    assert infer_racket_hand(left_handed) == "left"
+
+
+def test_an_invalid_hand_value_is_rejected():
+    with pytest.raises(ValueError):
+        detect_shots(_two_hand_sequence(), hand="both")

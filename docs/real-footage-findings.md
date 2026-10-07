@@ -90,3 +90,53 @@ text overlays. Fails the fps and camera-stability gates, as expected.
   `combined_wrist_speed` takes the faster of both wrists every frame, so the
   non-racket hand (which swings hard in a forehand) can create peaks. A
   racket-hand-only signal is the obvious next experiment; untested here.
+
+## 2026-10-07 (later): four side-view clips, 54 candidate events, assistant-labeled
+
+Footage (all local, copyrighted social-media edits, not in repo): four
+portrait side-view practice clips, 30fps, 9-34s. All fail the 60fps gate.
+`pose_detection_rate` was 0.996-1.0 on all four (player is large in frame).
+
+### Labels: PROVISIONAL, made by the assistant, not by a human reviewer
+Each of the 54 candidate events (union of two detector modes, near-duplicates
+merged) was judged from a 7-frame strip (-9..+9 frames) cropped to the player.
+Labels: Y = a stroke is happening within +/-9 frames, N = no stroke (ready
+stance, fidget), D = duplicate event for a stroke already counted, ? = unsure
+(5 events, excluded from precision). Judged by eye at small size; the owner has
+NOT verified them. Contact-frame accuracy was not assessed. Recall was not
+assessed: only detector candidates were reviewed, so strokes the detector
+missed are unknown.
+
+### Results (49 judged events)
+| Detector mode | events | Y | D | N | precision |
+|---|---|---|---|---|---|
+| default (faster of both wrists) | 49 | 23 | 5 | 17 | 0.51 |
+| `hand="auto"` (inferred racket hand only) | 44 | 21 | 3 | 15 | 0.54 |
+
+- Following one hand removed some false events but also lost 4 labeled strokes
+  (fed1 frames 570 and 651 look like low shots where the other hand leads).
+  Difference between modes is within noise at this sample size. Not adopted as
+  a default.
+- `infer_racket_hand` guessed "left" on IMG_3173 (a right-handed serve filmed
+  from behind): 2D pixel peak speed is unreliable for this.
+- One stroke often yields several events (5 duplicates): the 0.35 s minimum
+  separation is too short for a swing plus its follow-through.
+
+### What separates strokes from false events? (screened 5 features, AUC)
+| Feature | AUC |
+|---|---|
+| peak wrist speed per torso length | 0.53 (chance) |
+| wrist path length in +/-0.4 s | 0.67 |
+| burst width | 0.57 |
+| shoulder-width change (rotation proxy) | 0.77 |
+| wrist height above hips | 0.84 |
+| **wrist excursion in +/-0.4 s (max wrist-to-wrist distance / torso)** | **0.91** |
+
+Speed alone does not work: false events (ready-stance racket movement,
+follow-through) are as fast as real swings. Wrist excursion is the best lead,
+but treat it as a hypothesis: labels are the assistant's own and were made by
+looking at how large the swing is, so the feature and the label are partly
+circular; five features were screened on 49 events from four clips; one clip
+contributes a single labeled stroke. No filter has been implemented. Next step
+is the owner re-checking the labels independently, then testing on held-out
+footage.

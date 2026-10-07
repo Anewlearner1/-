@@ -121,12 +121,40 @@ def combined_wrist_speed(seq: PlayerLandmarkSequence) -> tuple[np.ndarray, np.nd
     return combined, which
 
 
+def _racket_hand_speed(seq: PlayerLandmarkSequence, hand: str) -> tuple[np.ndarray, np.ndarray]:
+    """Per-frame speed of one fixed wrist; undetected frames read as 0.0."""
+    idx = L_WRIST if hand == "left" else R_WRIST
+    speed = np.nan_to_num(_wrist_speed(seq.landmarks, idx, seq.fps), nan=0.0)
+    which = np.full(speed.shape, hand, dtype=object)
+    return speed, which
+
+
+def infer_racket_hand(seq: PlayerLandmarkSequence) -> str:
+    """The wrist that reaches the higher *peak* speed over the clip.
+
+    Peak, not total path length: the off hand can travel as far as the racket
+    hand over a clip (a serve toss, balancing) while never matching its peak.
+    This is the rule the sibling tennis-form-coach project settled on after
+    path length picked the wrong hand on real serve footage. Still a guess in
+    2D pixels: a clip whose best motion is the off hand will be mislabelled,
+    so pass ``hand`` explicitly when you know it.
+    """
+    peaks = {}
+    for name, idx in (("left", L_WRIST), ("right", R_WRIST)):
+        v = np.nan_to_num(_wrist_speed(seq.landmarks, idx, seq.fps), nan=0.0)
+        if v.size >= 5:
+            v = savgol_filter(v, window_length=5, polyorder=2)
+        peaks[name] = float(v.max()) if v.size else 0.0
+    return "left" if peaks["left"] > peaks["right"] else "right"
+
+
 def detect_shots(
     seq: PlayerLandmarkSequence,
     *,
     min_peak_ratio: float = 0.35,
     min_separation_s: float = 0.35,
     smooth_window_s: float = 0.15,
+    hand: str | None = None,
 ) -> ShotTimingResult:
     """Detect shot (contact) events from a player's landmark time series.
 
@@ -146,16 +174,28 @@ def detect_shots(
             blurring out a genuine swing peak (a full swing lasts several
             hundred ms; see tests/synth_pose.py's synthetic timings).
 
+        hand: ``None`` (default) keeps the original behaviour: the faster of
+            the two wrists each frame. ``"left"`` / ``"right"`` follow only
+            that wrist, and ``"auto"`` picks one with ``infer_racket_hand``.
+            Following one wrist stops the off hand's own swings (it moves a
+            lot in a forehand) from registering as shots.
+
     Returns:
         ShotTimingResult with one ShotEvent per detected contact, ordered by
         frame, plus the smoothed speed signal they were found on.
     """
+    if hand not in (None, "auto", "left", "right"):
+        raise ValueError(f"hand must be None, 'auto', 'left' or 'right', got {hand!r}")
     fps = seq.fps
     n = seq.frame_count
     if n < 5:
         return ShotTimingResult(events=[], speed=np.zeros(n), fps=fps)
 
-    speed, which = combined_wrist_speed(seq)
+    if hand is None:
+        speed, which = combined_wrist_speed(seq)
+    else:
+        speed, which = _racket_hand_speed(
+            seq, infer_racket_hand(seq) if hand == "auto" else hand)
 
     window = max(5, int(round(smooth_window_s * fps)))
     if window % 2 == 0:
