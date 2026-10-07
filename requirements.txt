@@ -7,3 +7,6 @@ fastapi>=0.110
 python-multipart>=0.0.9
 uvicorn>=0.29
 httpx>=0.27
+# optional: real-browser smoke test (tests/test_frontend_browser_smoke.py is skipped without it;
+# also needs a Chromium binary, e.g. 'playwright install chromium')
+playwright>=1.40
