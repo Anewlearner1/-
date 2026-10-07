@@ -129,6 +129,9 @@ LAT3D_WINDOW_S = 0.4
 LAT3D_GAP_S = 0.07
 LAT3D_CONF_SATURATION_M = 0.15   # |offset - threshold| at which confidence = 1
 LAT3D_MIN_FRAMES = 3
+# Contact neighbourhood (serve gate window, nearest valid contact frame), in
+# seconds so 60 fps clips look at the same time span; 2 frames at 30 fps.
+CONTACT_RADIUS_S = 2 / 30.0
 
 
 @dataclasses.dataclass(frozen=True)
@@ -325,12 +328,13 @@ def _classify_rule(seq, lm, c, n, hand, src, ratio, rw_idx, gap) -> StrokeClassi
         u = np.stack([-axis[:, 1], axis[:, 0]], axis=1) / torso[:, None]   # (1,0) when upright
         spread = np.sum((sh_r - sh_l) * u, axis=1) / torso   # right-minus-left shoulder, torso lengths
 
-    fc = _near_valid(np.concatenate([wrist, hm, torso[:, None]], axis=1), c)
+    r = max(1, int(round(CONTACT_RADIUS_S * seq.fps)))
+    fc = _near_valid(np.concatenate([wrist, hm, torso[:, None]], axis=1), c, radius=r)
     if fc is None:
         return _unknown(hand, src, "racket wrist/torso missing around contact")
 
     # --- overhead / serve gate
-    hi = slice(max(0, c - 2), min(n, c + 3))
+    hi = slice(max(0, c - r), min(n, c + r + 1))
     with np.errstate(invalid="ignore", divide="ignore"):
         above_head_s = (nose[:, 1] - wrist[:, 1]) / torso
         above_hip_s = (hm[:, 1] - wrist[:, 1]) / torso

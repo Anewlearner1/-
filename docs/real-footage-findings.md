@@ -745,8 +745,8 @@ Follow-up, fps audit (ahead of 60 fps footage):
 - The ball filter's ±8-frame window is now ±0.27 s, scaled by fps. At 29.97 and 30 fps it is still exactly 8 frames, so every number above is unchanged.
 - `detect_shots` was already in seconds.
 - These small constants are still in frames, and at 60 fps they cover half the time:
-  - the serve-gate window (±2 frames);
-  - the `_near_valid` radius (2);
+  - ~~the serve-gate window (±2 frames)~~ now in seconds (still 2 frames at 30 fps);
+  - ~~the `_near_valid` radius (2)~~ now in seconds (same);
   - `MIN_WINDOW_FRAMES` (3);
   - the hand-inference smoothing (5).
 - They are left as they are until 60 fps footage shows whether they matter.
