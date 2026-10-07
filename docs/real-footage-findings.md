@@ -293,3 +293,46 @@ differently across tools; this would also bear on the consistent "detector 3
 frames early" offset), the ball rebounded off something other than the racket,
 or the assistant is misreading the frames. The decoded frames were sent to the
 owner to judge directly. No conclusion until then; the labels are unchanged.
+
+## 2026-10-07 RESOLUTION: the conflict was frame numbering. Current state.
+
+The owner judged the assistant's decoded frames (numbers burned in) and
+confirmed contact at decoder frames 578 and 645. The earlier "no contact in
+570-580 / 640-651" answers were given using the owner's video player, which
+numbers frames about 3 higher than OpenCV's decoder for this clip (likely a
+variable-frame-rate mp4). Fed 1 is now labeled in decoder numbering: contacts
+129, 180, 200, 578, 645 (180 is an estimate; see the label meta).
+Fons and Fed 2 labels are still in the owner's player numbering.
+
+### Retracted (superseded by this section)
+- "Detector fires about 3 frames early": most likely the player/decoder offset,
+  not detector behaviour. On decoder frames, detections at 129 and 204 sit at
+  or just after the ball-on-racket frames (129-130, 200-201).
+- "570/589/651 are practice swings; a pose-only detector cannot tell swings
+  from hits" and the "ball near the racket without being struck" reading: both
+  came from the numbering mismatch. 570 and 651 are hits; 589 is the
+  follow-through duplicate of the 578 hit.
+- The 0.44 / 0.51 provisional-precision update that reclassified those frames.
+- The wrist-excursion held-out numbers used the wrong Fed 1 labels. With the
+  corrected labels the lowest true contact has excursion 1.53, below most false
+  events, so the idea is even weaker; it stays dropped.
+
+### Current results (2 clips, complete owner labels, +/-10 frames, one-to-one)
+| Method | TP | FP | FN | precision | recall |
+|---|---|---|---|---|---|
+| pose only (default) | 9 | 10 | 0 | 0.47 | 1.00 |
+| pose + ball-coloured blob near a wrist in +/-8 frames | 8 | 0 | 1 | 1.00 | 0.89 |
+
+- The one miss (Fed 1 frame 180) had no visible ball blob in the window.
+- The ball-trajectory reversal cue adds nothing on top: it never returned
+  "no" (6 reversals on true hits, 1 on the 589 duplicate, 12 undecidable).
+- Caveats: 9 true and 10 false events, 2 clips, both practice footage where a
+  ball is near the player essentially only when they hit it. In rallies or
+  multi-ball drills a ball can pass near a player who does not hit it; that
+  case is untested. The ">= 1 frame" rule was chosen after seeing earlier
+  results. Not tested on behind-the-baseline phone footage.
+
+### Process lesson
+Labels must be given on the decoder's frames, not a media player's frame
+counter. `labeling/label_shots.py` already burns decoder frame numbers into
+its stills; use it (or burned-in contact sheets) for all future labels.

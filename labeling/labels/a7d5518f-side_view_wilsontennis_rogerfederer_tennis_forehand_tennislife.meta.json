@@ -1,14 +1,15 @@
 {
-  "source": "owner_stated_frame_numbers",
+  "source": "owner_confirmed_hits_located_in_decoder_frames",
   "complete": true,
+  "frame_numbering": "opencv_decoder",
   "reviewer": "project owner",
   "date": "2026-10-07",
-  "not_contacts": [
-    445,
-    570,
-    589,
-    651
-  ],
-  "not_contacts_note": "Owner saw no ball at the detected frames 445, 570, 589, 651. For 570 and 651 the owner then re-checked frames 570-580 and 640-651 and confirmed the racket does NOT hit the ball in either window, even though a ball-coloured blob is visible near the racket at 577-578 and 643-644 (cause not stated: ball passing by, a miss, or another shot). So they are confirmed non-contacts. 445 and 589 were checked at the detected frame only.",
-  "notes": "Owner confirmed 132, then said 183 and 204 have a ball and the others (445, 570, 589, 651 from the assistant's list) do not. Treated as the complete list for this clip; detections at 62 and 162 were not mentioned and are assumed not to be contacts. Revert to complete=false if wrong. Frame-numbering base (0 vs 1) and the tool used were not stated."
+  "per_frame_provenance": {
+    "578": "owner judged contact on decoder frames with numbers burned in",
+    "645": "owner judged contact on decoder frames with numbers burned in",
+    "129": "owner confirmed a hit (stated as 132 in the owner's player); ball reaches the racket at decoder frame 129-130",
+    "200": "owner confirmed a hit (stated as 204 in the owner's player); ball track reverses at decoder frame 200-201",
+    "180": "owner confirmed a hit (stated as 183 in the owner's player); no usable ball track, frame ESTIMATED as 183 minus the ~3-frame player/decoder offset seen at 129 and 200"
+  },
+  "notes": "The owner's player numbers frames about 3 higher than OpenCV's decoder for this clip (variable-frame-rate mp4 likely). Earlier 'no contact' answers for 570/580 and 640/651 were given in player numbering and were reversed once the owner judged decoder frames directly. Detections at 62, 162, 445 are not contacts (owner); 589 is the follow-through of the 578 hit."
 }

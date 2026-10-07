@@ -141,3 +141,9 @@ produced with `label_shots.py`; provenance is in each `.meta.json`
 (`"complete": false`, `source: owner_stated_frame_numbers`). A frame not
 listed is unlabeled, not a negative. The frame-numbering base (0 or 1) the
 owner used was not stated. The videos themselves are not in the repo.
+
+**Frame numbering warning (2026-10-07):** a media player's frame counter can
+differ from OpenCV's decoder by several frames on variable-frame-rate mp4s
+(about 3 frames on the Fed 1 clip). Always label on stills with the decoder's
+frame number burned in, as `label_shots.py extract` produces. Each label's meta
+now records `frame_numbering`.

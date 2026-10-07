@@ -186,3 +186,8 @@ every contact had a detection within 8 frames; mean offset -3.8 frames in the
 default mode (5 of 6 exactly 3 frames early), so the wrist-speed peak tends to
 precede the contact frame the owner reads. n=6, one footage type, frame-number
 base unverified: a lead, not a calibration. See `docs/real-footage-findings.md`.
+
+**Correction (2026-10-07):** the "-3.8 frame mean offset / wrist peak precedes
+contact" note above is most likely an artefact: the owner's frame numbers came
+from a media player that numbers frames about 3 higher than OpenCV's decoder on
+these clips. See `docs/real-footage-findings.md` ("RESOLUTION").
