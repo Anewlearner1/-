@@ -403,6 +403,6 @@ Reading it:
   clips with a large player and a clearly coloured ball. Not representative of
   the target camera setup (behind the baseline, small player) or of rallies
   where balls pass players who do not hit them.
-- Label caveat: 13 of 42 detections were judged "no hit" only on every-3rd-
-  frame strips (Fed 2's 10, plus none elsewhere: Fons/Fed 1 labels came from
-  frame lists). Earlier sparse strips hid 7 Fed 2 hits, so a few more may hide.
+- Label caveat: 10 of 42 detections (all on Fed 2) were judged "no hit" only on
+  every-3rd-frame strips; Fons and Fed 1 labels came from frame lists. Sparse
+  strips had hidden 7 Fed 2 hits, so a few more may still be hidden.
