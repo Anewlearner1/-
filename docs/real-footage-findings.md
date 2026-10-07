@@ -728,3 +728,15 @@ Pose-only detections on all 7 clips were split into true positives (within 0.33 
 - 3D speeds are noisy. Some reach 40–54 m/s, which is not physically plausible for a wrist, because monocular depth jitters frame to frame.
 - Most false positives are follow-throughs and takebacks of real strokes, which are just as fast as the hit.
 - **Not pursued.** The ball-colour filter stays the M2 tool. The decision on making it the default waits for spec-compliant footage.
+
+## 2026-10-07: full flow as the owner would run it (real processes, real browser)
+
+`uvicorn backend.api.upload:app` and `python -m backend.worker --ball-filter --merge-within-s 0.5 --classify-strokes` ran as separate processes, exactly as `docs/run-locally-windows.md` says. Headless Chromium then went through:
+- `/` → upload page;
+- chose 右手 and uploaded;
+- passed the gate, submitted, and followed the dashboard link;
+- the dashboard polled and then showed the analysis automatically.
+
+No JS errors.
+
+The input was the Fons clip made into "60 fps" by writing every frame twice, only to pass the 60 fps gate. It gave 3 shots (2 forehands, 1 backhand) instead of the 4 the 30 fps original gives: the 5.37 s hit was lost. Duplicated frames make the wrist speed alternate between zero and double, which a real 60 fps recording does not do. So this says nothing about real 60 fps accuracy, but it does show that detection is sensitive to frame timing. **Real 60 fps footage is still untested.**
