@@ -448,3 +448,18 @@ the shipped code reproduced the experiment numbers exactly.
 - Merge at 0.5 s removes the 481 detection (10 frames after 471).
 - Every-frame strips for the 9 detections sent to the owner; nothing is
   labeled, so there are no precision/recall figures for these clips.
+
+### Komura owner review (strip level, hit frames NOT yet located)
+Owner: K1-K6, K8, K9 contain a hit; K7 (frame 415) contains none (assistant's
+reading of the sentence "only K7 has no hit"; confirm if wrong). Strips are
++/-9 frames around each detection, so the windows of K8 (471) and K9 (481)
+overlap and one hit could be what makes both strips "have a hit"; K6 (396) and
+K7 (415) also overlap. No hit frame was named, so no label file was written and
+no one-to-one precision/recall is computed.
+
+Strip-level reading only: pose only 8 of 9 detections have a hit in their strip
+(0.89); the ball-colour filter keeps all 9 (fooled by the shirt graphic);
+`merge_within_s=0.5` drops K9 (481), which is wrong if K9 is a separate hit and
+right if it is the follow-through of K8's. Next: the owner names the hit frame
+in each strip (frame numbers are printed under every tile), which gives located
+labels and settles the K8/K9 question.
