@@ -153,3 +153,77 @@ def test_merge_keeps_hits_further_apart_than_the_window():
 def test_merge_within_s_must_be_positive():
     with pytest.raises(ValueError):
         detect_shots(synth_landmark_sequence([60], fps=FPS), merge_within_s=0)
+
+
+# ------------------------------------------------------------ merge_keep
+from ml.shot_timing import ShotEvent, merge_events  # noqa: E402
+
+
+def _ev(frame: int, speed: float) -> ShotEvent:
+    return ShotEvent(contact_frame=frame, contact_time_s=frame / FPS,
+                     peak_speed=speed, wrist="right")
+
+
+# A takeback peak at 163 followed by the faster hit at 178 (the Ruud case),
+# then a lone event far away.
+_TAKEBACK_THEN_HIT = [_ev(163, 900.0), _ev(178, 1500.0), _ev(300, 1000.0)]
+
+
+@pytest.mark.parametrize("keep, expected", [
+    ("earlier", [163, 300]),
+    ("later", [178, 300]),
+    ("stronger", [178, 300]),
+])
+def test_merge_keep_policy_picks_the_survivor(keep, expected):
+    out = merge_events(_TAKEBACK_THEN_HIT, FPS, 0.5, keep=keep)
+    assert [e.contact_frame for e in out] == expected
+
+
+def test_stronger_keeps_the_earlier_event_when_it_is_faster():
+    events = [_ev(60, 2000.0), _ev(72, 800.0)]            # hit, then follow-through
+    assert [e.contact_frame for e in merge_events(events, FPS, 0.5, keep="stronger")] == [60]
+    assert [e.contact_frame for e in merge_events(events, FPS, 0.5, keep="later")] == [72]
+
+
+def test_stronger_ties_go_to_the_earlier_event():
+    events = [_ev(60, 1000.0), _ev(70, 1000.0)]
+    assert [e.contact_frame for e in merge_events(events, FPS, 0.5, keep="stronger")] == [60]
+
+
+def test_groups_are_anchored_on_their_first_event_for_every_policy():
+    # 0, 12, 24 frames at 30 fps with a 0.5 s (15-frame) window: 12 joins the
+    # group started at 0, 24 is 24 frames after 0 so it starts a new group.
+    events = [_ev(0, 1.0), _ev(12, 3.0), _ev(24, 2.0)]
+    for keep, expected in (("earlier", [0, 24]), ("later", [12, 24]), ("stronger", [12, 24])):
+        assert [e.contact_frame for e in merge_events(events, FPS, 0.5, keep=keep)] == expected
+
+
+def test_merge_events_matches_the_original_earlier_behaviour_on_unsorted_input():
+    events = [_ev(178, 1.0), _ev(163, 1.0), _ev(500, 1.0)]
+    assert [e.contact_frame for e in merge_events(events, FPS, 0.5)] == [163, 500]
+
+
+def test_merge_events_leaves_isolated_events_alone():
+    events = [_ev(10, 1.0), _ev(100, 2.0)]
+    for keep in ("earlier", "later", "stronger"):
+        assert merge_events(events, FPS, 0.5, keep=keep) == events
+
+
+def test_detect_shots_passes_merge_keep_through():
+    seq = synth_landmark_sequence([60, 72], fps=FPS, n_frames=160)
+    later = detect_shots(seq, merge_within_s=0.5, merge_keep="later")
+    assert [e.contact_frame for e in later.events] == pytest.approx([72], abs=2)
+    both = detect_shots(seq).events
+    stronger = detect_shots(seq, merge_within_s=0.5, merge_keep="stronger").events
+    assert stronger == [max(both, key=lambda e: e.peak_speed)]
+
+
+def test_merge_keep_is_ignored_without_a_window_and_validated_always():
+    seq = synth_landmark_sequence([60, 72], fps=FPS, n_frames=160)
+    assert detect_shots(seq, merge_keep="later").shot_count == 2
+    with pytest.raises(ValueError):
+        detect_shots(seq, merge_keep="first")
+    with pytest.raises(ValueError):
+        merge_events([], FPS, 0.5, keep="first")
+    with pytest.raises(ValueError):
+        merge_events([], FPS, 0.0)

@@ -142,6 +142,8 @@ def main(argv: Optional[list[str]] = None) -> int:
                         help="match tolerance in seconds (ADR 0003 default 0.33)")
     parser.add_argument("--merge-within-s", type=float, default=None,
                         help="drop an event this soon after the previous one (see detect_shots)")
+    parser.add_argument("--merge-keep", choices=["earlier", "later", "stronger"],
+                        default="earlier", help="which event of a merged group survives")
     parser.add_argument("--ball-filter", action="store_true",
                         help="keep only events with a ball blob near a wrist (ml/ball_filter.py)")
     args = parser.parse_args(argv)
@@ -158,7 +160,8 @@ def main(argv: Optional[list[str]] = None) -> int:
                   file=sys.stderr)
             continue
         seq = extract_player_landmarks(video, progress=False)
-        result = detect_shots(seq, hand=args.hand, merge_within_s=args.merge_within_s)
+        result = detect_shots(seq, hand=args.hand, merge_within_s=args.merge_within_s,
+                              merge_keep=args.merge_keep)
         if args.ball_filter:
             from ml.ball_filter import filter_shots_with_ball
             result, _ = filter_shots_with_ball(video, seq, result)

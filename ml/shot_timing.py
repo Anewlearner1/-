@@ -148,6 +148,39 @@ def infer_racket_hand(seq: PlayerLandmarkSequence) -> str:
     return "left" if peaks["left"] > peaks["right"] else "right"
 
 
+MERGE_KEEP_POLICIES = ("earlier", "later", "stronger")
+
+
+def merge_events(events: list[ShotEvent], fps: float, within_s: float, *,
+                 keep: str = "earlier") -> list[ShotEvent]:
+    """Collapse events closer than ``within_s`` into one event per group.
+
+    Groups are formed left to right: a group starts at an event and takes in
+    every following event at most ``within_s`` after that *first* event. The
+    grouping does not depend on ``keep``, so the policies differ only in which
+    member survives: the first (``"earlier"``), the last (``"later"``) or the
+    one with the highest ``peak_speed`` (``"stronger"``; ties go to the
+    earlier). With ``"earlier"`` this is exactly the original behaviour
+    (an event is dropped when it is within the window of the last kept one).
+    """
+    if within_s <= 0:
+        raise ValueError("within_s must be positive")
+    if keep not in MERGE_KEEP_POLICIES:
+        raise ValueError(f"keep must be one of {MERGE_KEEP_POLICIES}, got {keep!r}")
+    ordered = sorted(events, key=lambda e: e.contact_frame)
+    groups: list[list[ShotEvent]] = []
+    for e in ordered:
+        if groups and e.contact_frame - groups[-1][0].contact_frame <= within_s * fps:
+            groups[-1].append(e)
+        else:
+            groups.append([e])
+    if keep == "earlier":
+        return [g[0] for g in groups]
+    if keep == "later":
+        return [g[-1] for g in groups]
+    return [max(g, key=lambda e: e.peak_speed) for g in groups]  # max keeps first on ties
+
+
 def detect_shots(
     seq: PlayerLandmarkSequence,
     *,
@@ -156,6 +189,7 @@ def detect_shots(
     smooth_window_s: float = 0.15,
     hand: str | None = None,
     merge_within_s: float | None = None,
+    merge_keep: str = "earlier",
 ) -> ShotTimingResult:
     """Detect shot (contact) events from a player's landmark time series.
 
@@ -181,8 +215,8 @@ def detect_shots(
             Following one wrist stops the off hand's own swings (it moves a
             lot in a forehand) from registering as shots.
 
-        merge_within_s: if set, an event this soon after the previously kept
-            one is dropped and the earlier kept. One swing often produces a
+        merge_within_s: if set, events this close together are merged into one
+            (``merge_keep`` picks the survivor; by default the earlier). One swing often produces a
             second peak during its follow-through; contact comes first, so the
             earlier event is the one to keep. Off by default: on labelled
             footage the follow-through duplicates sat 10-19 frames after the
@@ -191,12 +225,22 @@ def detect_shots(
             (see docs/real-footage-findings.md). 0.5 s caught 3 of 4 duplicates
             there without merging any hit.
 
+        merge_keep: which event of a merged group survives (see
+            ``merge_events``): ``"earlier"`` (default), ``"later"`` or
+            ``"stronger"`` (higher smoothed peak speed). Ignored when
+            ``merge_within_s`` is None. "earlier" suits the forehand clips the
+            window was chosen on; on the Ruud backhand clip the earlier event of
+            each duplicate pair was the takeback and the hit came 13-15 frames
+            later (docs/real-footage-findings.md).
+
     Returns:
         ShotTimingResult with one ShotEvent per detected contact, ordered by
         frame, plus the smoothed speed signal they were found on.
     """
     if merge_within_s is not None and merge_within_s <= 0:
         raise ValueError("merge_within_s must be positive")
+    if merge_keep not in MERGE_KEEP_POLICIES:
+        raise ValueError(f"merge_keep must be one of {MERGE_KEEP_POLICIES}, got {merge_keep!r}")
     if hand not in (None, "auto", "left", "right"):
         raise ValueError(f"hand must be None, 'auto', 'left' or 'right', got {hand!r}")
     fps = seq.fps
@@ -243,10 +287,5 @@ def detect_shots(
         for p in sorted(int(p) for p in peaks)
     ]
     if merge_within_s is not None:
-        merged: list[ShotEvent] = []
-        for e in events:
-            if merged and e.contact_frame - merged[-1].contact_frame <= merge_within_s * fps:
-                continue
-            merged.append(e)
-        events = merged
+        events = merge_events(events, fps, merge_within_s, keep=merge_keep)
     return ShotTimingResult(events=events, speed=smoothed, fps=fps)
