@@ -45,6 +45,22 @@ def match_contacts(detected: Sequence[int], truth: Sequence[int]) -> list[dict]:
     return out
 
 
+def match_one_to_one(detected: Sequence[int], truth: Sequence[int], tol: int) -> dict:
+    """Greedy one-to-one matching: each truth and each detection is used once.
+
+    A second detection of the same stroke (a duplicate) is therefore a false
+    positive, which is what a user counting shots would experience.
+    """
+    pairs = sorted(((abs(d - t), d, t) for d in detected for t in truth))
+    used_d, used_t, tp = set(), set(), []
+    for dist, d, t in pairs:
+        if dist <= tol and d not in used_d and t not in used_t:
+            used_d.add(d); used_t.add(t); tp.append((int(t), int(d)))
+    return {"tp": sorted(tp),
+            "fp": sorted(int(d) for d in detected if d not in used_d),
+            "fn": sorted(int(t) for t in truth if t not in used_t)}
+
+
 def summarize(matches: list[dict], tolerances: Sequence[int] = (5, 10)) -> dict:
     offs = [m["offset"] for m in matches if m["offset"] is not None]
     summary = {"n_contacts": len(matches),
@@ -62,9 +78,14 @@ def evaluate_detected(label: dict, detected: Sequence[int],
               "n_detected": len(detected), "matches": matches,
               **summarize(matches, tolerances)}
     if label["complete"]:
-        tp = sum(1 for d in detected
-                 if any(abs(d - t) <= max(tolerances) for t in label["contact_frames"]))
-        result["precision_within_max_tol"] = round(tp / len(detected), 3) if detected else None
+        for tol in tolerances:
+            m = match_one_to_one(sorted(detected), label["contact_frames"], tol)
+            tp, fp, fn = len(m["tp"]), len(m["fp"]), len(m["fn"])
+            result[f"within_{tol}"] = {
+                "tp": tp, "fp": fp, "fn": fn,
+                "precision": round(tp / (tp + fp), 3) if tp + fp else None,
+                "recall": round(tp / (tp + fn), 3) if tp + fn else None,
+                "false_positive_frames": m["fp"], "missed_frames": m["fn"]}
     return result
 
 

@@ -1,7 +1,7 @@
 {
   "source": "owner_stated_frame_numbers",
-  "complete": false,
+  "complete": true,
   "reviewer": "project owner",
   "date": "2026-10-07",
-  "notes": "Partial list: only contacts the owner confirmed. A frame that is NOT listed is unlabeled, not a negative. Frame numbering base (0 vs 1) and the tool used to read frame numbers were not stated."
+  "notes": "Owner listed 26, 95, 164 and then added 237 in reply to a request to list ALL contacts in this clip, so the list is treated as complete. This inference was not stated outright; revert to complete=false if wrong. Frame-numbering base (0 vs 1) and the tool used were not stated."
 }

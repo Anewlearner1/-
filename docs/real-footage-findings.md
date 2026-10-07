@@ -140,3 +140,28 @@ circular; five features were screened on 49 events from four clips; one clip
 contributes a single labeled stroke. No filter has been implemented. Next step
 is the owner re-checking the labels independently, then testing on held-out
 footage.
+
+## 2026-10-07 (latest): first precision/recall against owner labels (one clip)
+
+Clip: Fonseca practice, 9.3 s, 30fps, pose rate 1.0. Owner-listed contacts
+26, 95, 164, 237 (treated as the COMPLETE list: the owner added 237 in reply to
+a request to list all contacts; not stated outright, see the label's meta).
+One-to-one matching (a duplicate detection of one stroke counts as a false
+positive), 4 true strokes:
+
+| Mode | tolerance | TP | FP | FN | precision | recall |
+|---|---|---|---|---|---|---|
+| default (both wrists) | +/-5 and +/-10 | 4 | 6 | 0 | **0.40** | **1.00** |
+| `hand="auto"` | +/-10 | 4 | 5 | 0 | 0.44 | 1.00 |
+| `hand="auto"` | +/-5 | 2 | 7 | 2 | 0.22 | 0.50 |
+
+- Default mode found all 4 strokes. Its 6 false positives: 5 ready-stance
+  movements (frames 43, 61, 73, 108, 125) and 1 duplicate of the 164 stroke (171).
+- `hand="auto"` fires 5-7 frames later than the default (the other hand's
+  wrist peaks earlier), so it only matches at the wider tolerance. No benefit.
+- Wrist excursion (max wrist-to-wrist distance in +/-0.4 s, per torso length)
+  ranked all 4 true strokes above all 6 false ones (AUC 1.00), but the margin
+  is thin (lowest true 1.90, highest false 1.81), it is one clip with n=4 vs 6,
+  and a duplicate is better removed by merging nearby events than by a
+  threshold. In-sample lead only; no filter implemented. Needs a second clip
+  with a complete owner label to test on held-out data.
