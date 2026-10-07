@@ -463,3 +463,32 @@ Strip-level reading only: pose only 8 of 9 detections have a hit in their strip
 right if it is the follow-through of K8's. Next: the owner names the hit frame
 in each strip (frame numbers are printed under every tile), which gives located
 labels and settles the K8/K9 question.
+
+### Komura located hits (owner, every-frame decoder strips) and first timing spread
+Hits: K1 30, K2 111, K4 257, K5 329, K6 404, K8 478 (K9 479 recorded as the same
+stroke as K8, one frame apart). K3 has a hit but no frame was given; it is left
+out of the scoring below. K7 (415) has no hit and sits 11 frames after the K6
+hit: a follow-through duplicate. Label is partial (hits outside the nine
+detections were not reported), file `labeling/labels/8ede2a37-...json`.
+
+Timing of the pose-speed peak against the located hit (detected - hit):
++8, -8, -7, +1, -8, -7 frames (about +/-0.27 s at 30 fps), mixed signs. So the
+peak is not a precise contact locator: only 1 of 6 is within 5 frames, all 6
+within 8. The earlier "3 frames early" pattern is not supported.
+
+One-to-one scoring (8 detections after leaving out K3's 175; 6 located hits):
+
+| Setting | tol +/-5 | tol +/-8 and +/-10 |
+|---|---|---|
+| pose only | P 0.25 / R 0.33 | **P 0.75 / R 1.00** (FP: 415, 481) |
+| merge 0.5 s | P 0.14 / R 0.17 | **P 0.86 / R 1.00** (FP: 415) |
+| ball filter (alone or with merge) | same as without it | same: no detection removed |
+
+- Merge removed 481, a true duplicate of the 478 hit, but did not remove 415
+  (19 frames after 404, outside the 15-frame window). A window long enough to
+  catch it (0.65 s) would also merge the real Fed 1 hits that were 20 frames apart.
+- The ball filter did nothing here: the shirt graphic is ball-coloured.
+- Consequence for the M2 criterion: ADR 0002 says +/-10 frames. At 30 fps that
+  is 0.33 s and is needed, since the peak lands up to 8 frames from the hit; a
+  tolerance in seconds (0.33 s) would stay comparable at 60 fps. Not changed
+  here; raise with the owner.

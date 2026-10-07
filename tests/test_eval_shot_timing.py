@@ -53,10 +53,10 @@ def test_committed_labels_completeness_flags():
     from pathlib import Path
     labels = {p.name: load_label(p) for p in sorted(Path("labeling/labels").glob("*.json"))
               if not p.name.endswith(".meta.json")}
-    assert len(labels) == 3
+    assert len(labels) == 4
     for name, lab in labels.items():
         assert lab["contact_frames"]
-        assert lab["complete"] is name.startswith(("1436d55e", "a7d5518f"))
+        assert lab["complete"] is name.startswith(("1436d55e", "a7d5518f"))   # Fed 2 and Komura are partial
 
 
 def test_a_duplicate_detection_of_one_stroke_is_a_false_positive():
