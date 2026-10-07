@@ -170,3 +170,19 @@ edited here (not ml-engineer's code).
    (racket wrist high at contact) is an interim design, not a decision.
 6. The takeback frame is "farthest from contact within the window", an
    untested proxy; abbreviated swings fall to the tie-breaker or `unknown`.
+
+## M2 evaluation script (added 2026-10-07)
+
+`python -m ml.eval_shot_timing <label.json ...> --videos-dir data/videos`
+runs `extract_player_landmarks()` + `detect_shots()` on the video whose file
+name starts with the label's `video_id` and compares against `contact_frames`.
+Reports `offset = detected - truth` (negative = detector fired early) and the
+hit rate within +/-5 and +/-10 frames. When the sibling `.meta.json` says
+`"complete": false` it does not report precision, because unlisted detections
+may be real strokes nobody labeled.
+
+First real numbers (6 owner-confirmed contacts in 3 clips, partial labels):
+every contact had a detection within 8 frames; mean offset -3.8 frames in the
+default mode (5 of 6 exactly 3 frames early), so the wrist-speed peak tends to
+precede the contact frame the owner reads. n=6, one footage type, frame-number
+base unverified: a lead, not a calibration. See `docs/real-footage-findings.md`.

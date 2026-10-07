@@ -132,3 +132,12 @@ needed for these tests). The human-correction step in that end-to-end test
 is a stub (statuses set directly, as a JSON-editing reviewer would), not
 the interactive CLI prompt. These tests confirm the tool's logic is
 correct; they are not, and do not claim to be, real labeled data.
+
+## Labels that exist (updated 2026-10-07)
+
+`labeling/labels/` holds 3 **partial** labels (6 contact frames in total) the
+owner stated by frame number for three side-view practice clips. They were not
+produced with `label_shots.py`; provenance is in each `.meta.json`
+(`"complete": false`, `source: owner_stated_frame_numbers`). A frame not
+listed is unlabeled, not a negative. The frame-numbering base (0 or 1) the
+owner used was not stated. The videos themselves are not in the repo.
