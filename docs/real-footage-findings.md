@@ -248,3 +248,19 @@ unconfirmed, and so is the 0.44 / 0.51 provisional-precision update. Frame 589
 and 445 had no blob in the window (still consistent with no ball).
 If 570 and 651 are real shots, the rule above keeps 8 of 9 true events and 0
 false ones; this has not been confirmed.
+
+### RESOLVED (owner re-check): 570 and 651 are NOT contacts
+The owner watched frames 570-580 and 640-651 and confirmed the racket does not
+hit the ball in either window. The correction above (that they may be real shots
+offset by 7-8 frames) is withdrawn; the original labels stand and
+`under_review` is removed from the label meta. The 0.44 / 0.51 provisional
+precision figures are valid again (still the assistant's labels apart from the
+owner-confirmed frames).
+
+What this changes about the ball-colour result: the two "false positives" of
+the rule are real false positives, and they are a ball present near the racket
+WITHOUT being struck. So a ball-coloured blob near a wrist is a necessary-looking
+but not sufficient cue: precision 0.75 / recall 0.86 stand as measured, and the
+remaining errors are the case a ball-trajectory cue (direction or speed change
+at the racket) exists to handle. What the ball was doing at 577-578 and
+643-644 is unknown.
