@@ -638,3 +638,39 @@ Code review fixes (same day):
 - The serve gate now runs **before** the edge-on check, so a side-on serve stays "other" and is not turned into a gap "forehand". That moved the in-sample figure from 0.80 to 0.78. The leave-one-clip-out figure is unchanged at 0.61.
 - `shots.stroke_confidence` and the API field `fh_bh_confidence` now distinguish wrist-gap guesses (0.3) from takeback-rule labels.
 - A classifier error no longer discards the detected shots.
+
+## 2026-10-07: racket detection experiment (M3, experiment 2) and merge keep-policy (M2)
+
+**Detector.** MediaPipe ObjectDetector with EfficientDet-Lite2 (Apache-2.0, free; Google storage). This replaced YOLOv8 because PyTorch's CPU index and Hugging Face are blocked by the sandbox proxy. Score ≥ 0.2, class `tennis racket`, every 2nd frame from −12 to +4 frames of each of the 46 hits, about 0.22 s per 720p frame on CPU. The racket was found in **70–97% of frames** per clip (Fed 2 lowest at 0.70, Fons highest at 0.97).
+
+**Racket hand from racket proximity** (the wrist nearest the racket-box centre wins a vote per frame; all 7 players are right-handed):
+
+| | right clips |
+|---|---|
+| current peak-speed rule | 2/7 |
+| racket proximity, every frame | 5/7 (both Sinner backhand-only clips → left: in a two-hander the top hand is the left) |
+| racket proximity, only frames with wrists ≥ 0.4–0.6 torso apart | 6/7 (Sinner CC still left) |
+
+The gap cut-off was chosen while looking at these 7 clips, and none of them has a left-handed player. This is promising as the default when the user picks 不確定, but it is **not shipped**: it needs left-handed footage first.
+
+**Racket side as an FH/BH cue: no gain.** I measured the racket-centre lateral offset before contact against the wrist offset over the same frames:
+
+| cue | AUC, all 46 | AUC, 29 hits not edge-on |
+|---|---|---|
+| racket centre | 0.86 | 0.96 |
+| wrist | 0.86 | 0.95 |
+
+The racket adds nothing over the wrist. Swapping the takeback rule for the mean wrist lateral (−0.4 to −0.07 s) plus the gap fallback gives 0.63 leave-one-clip-out, against 0.61 now, which is within noise. The remaining errors are concentrated in:
+- side-on clips: Fons and Fed 2, 6/17;
+- Ruud: 0/5 in every variant. The sign is consistently flipped, so the shoulder left/right ordering is probably wrong for that camera angle.
+
+**Merge keep-policy** (`detect_shots(merge_keep=...)`; evaluated by the ml-engineer role on all 7 clips at 0.33 s):
+- "later" and "stronger" fix Ruud.
+- But they lose hits on Sinner CC (they keep the non-contact at 49 over the hit at 37), on Fed 2 ("later" loses 419), and on Fons with the ball filter (they keep the follow-through 171, which the filter then drops).
+- **The default stays "earlier"**; the option exists for future data.
+- Pooled: pose only 0.69 / 1.00; earlier 0.72 / 0.96; stronger 0.74 / 0.98; with the ball filter, 0.87–0.91 precision and 0.85–0.91 recall.
+- Fed 2's meta has no `not_contacts`, so its non-hits are "unreviewed" rather than counted as FP.
+
+**PM decision (ADR 0005 authority):**
+- Stop tuning rules on these 46 hits. Every change since the hand fix moves the result by one or two hits, which is noise at n = 46 with 5 of 7 clips containing a single stroke type.
+- The next real gain needs **data**: clips with both forehands and backhands, a left-handed player, and the camera the product will support.
