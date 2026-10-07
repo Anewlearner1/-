@@ -336,3 +336,25 @@ Fons and Fed 2 labels are still in the owner's player numbering.
 Labels must be given on the decoder's frames, not a media player's frame
 counter. `labeling/label_shots.py` already burns decoder frame numbers into
 its stills; use it (or burned-in contact sheets) for all future labels.
+
+## 2026-10-07: first held-out test of the ball-colour rule (Fed 2), PENDING label review
+
+Fed 2 (34 s, 23 default-mode detections) was not used to choose anything. The
+owner judged all 23 detections on decoder strips (7 tiles at every 3rd frame):
+hits at E5, E6, E9, E19, E21, E22; none at the other 17 (E3 "really none").
+Rule unchanged (>= 1 ball-blob frame in +/-8).
+
+| Method | detections kept | hits kept | precision |
+|---|---|---|---|
+| pose only | 23 | 6 of 6 | 0.26 |
+| + ball-colour rule | 11 | 5 of 6 | 0.45 |
+
+Far worse than the 1.00 on the two clips used to build the rule. Of the 6
+retained "no hit" events, one is a 3-pixel speck on a hand (E18, a genuine
+false detection). The other four (E1, E3, E13, E16) contain a real ball; on an
+every-frame view the ball meets the racket at f52, f128, f504 and f576, frames
+the every-3rd-frame strips skipped or showed poorly. Either those are hits the
+strip design hid from the owner, or the ball passed the racket without being
+struck. Sent to the owner as every-frame strips; the result above stands until
+then. Lesson regardless: review strips must show every frame near contact.
+Recall is unknown for Fed 2 (missed hits outside the 23 strips not reported).
