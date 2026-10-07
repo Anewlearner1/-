@@ -713,3 +713,4 @@ Review fixes (same day):
 - The docstring now says world axes follow the camera, not gravity: zeroing y is horizontal only for a roughly level camera, and a tilted rig is untested.
 - **Reproduce:** `python -m ml.eval_stroke_classification labeling/labels/*.json --videos-dir data/videos --loco-3d`, with `racket_hand` set in the labels. The cached landmark files are not in the repo, so `--videos-dir` re-extracts them. This gives 43/46 with fold thresholds of 0.277–0.325 m.
 - The normal report now says how many clips had world landmarks. A cache from before world landmarks existed silently fell back to the 0.61 2D rules.
+- **Detected mode** (each labeled hit matched to the nearest pose detection within ±10 frames, i.e. 0.33 s at 30 fps; threshold 0.28 m, in-sample): 43/46 = 0.93, with no hit missed. False-positive detections are not scored here; that is M2's precision.
