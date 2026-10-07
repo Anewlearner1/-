@@ -147,7 +147,10 @@ def test_unknown_stroke_labels_are_stored_as_null(env):
                                 stroke_confidences=[0.3, 0.0])
     shots = db.list_shots(uid)
     assert [s["fh_bh_label"] for s in shots] == ["backhand", None]
+    assert [s["fh_bh_status"] for s in shots] == ["labeled", "undetermined"]
     assert [s["fh_bh_confidence"] for s in shots] == [0.3, None]
+    db.insert_shots_from_result(uid, result)
+    assert [s["fh_bh_status"] for s in db.list_shots(uid)] == ["not_analyzed"] * 2
     with pytest.raises(ValueError):
         db.insert_shots_from_result(uid, result, stroke_labels=["backhand"])
 

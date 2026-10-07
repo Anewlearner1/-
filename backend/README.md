@@ -34,7 +34,8 @@ each field/status value; read it before changing this response shape.
 - `GET /uploads/{upload_id}/shots` -> `{upload_id, shot_count, shots[]}`
   ordered by `shot_index`; each shot has `contact_frame`, `contact_time_s`,
   `peak_speed` (wrist speed, not ball speed), `wrist`, `fh_bh_label`, `fh_bh_confidence`
-  (heuristic 0-1, not a probability; 0.3 = wrist-gap guess),
+  (heuristic 0-1, not a probability; 0.3 = wrist-gap guess), `fh_bh_status`
+  (`not_analyzed` = 尚未分析 / `undetermined` = classifier ran but abstained / `labeled`),
   `ball_speed_kmh`, `source`. `fh_bh_label` / `ball_speed_kmh` are JSON
   `null` (= dashboard "尚未分析", never 0) until analyzed. `shots` is filled by
   `db.insert_shots_from_result()`, called by the worker (`backend/worker.py`).

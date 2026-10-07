@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS shots (
     contact_time_s REAL NOT NULL,
     peak_speed REAL NOT NULL,          -- wrist speed, NOT ball speed
     wrist TEXT,                        -- "left"/"right" (dashboard contract)
-    stroke_label TEXT,                 -- NULL until M3 classifier has run (or it abstained)
+    stroke_label TEXT,                 -- NULL = not analyzed; 'unknown' = classifier abstained
     stroke_confidence REAL,            -- heuristic 0-1, NOT a probability; low = guess
     ball_speed_kmh REAL,               -- NULL until M5 exists
     source TEXT NOT NULL,              -- provenance, e.g. "ml.shot_timing.detect_shots"
@@ -173,10 +173,10 @@ def insert_shots_from_result(upload_id: str, result: Any,
 
     Called by backend/worker.py. Replaces any existing shots for the upload.
     ``stroke_labels`` (aligned with ``result.events``) fills stroke_label,
-    ``stroke_confidences`` fills stroke_confidence. Without labels, and for
-    "unknown", both stay NULL. Known limitation: NULL then means both "not
-    analyzed" and "classifier abstained". ball_speed_kmh is always NULL.
-    Returns the number of shots inserted.
+    ``stroke_confidences`` fills stroke_confidence. Without labels both stay
+    NULL ("not analyzed"); an "unknown" label is stored as 'unknown' with NULL
+    confidence ("classifier ran and abstained"), so the two stay distinct.
+    ball_speed_kmh is always NULL. Returns the number of shots inserted.
     """
     events = list(result.events)
     if stroke_labels is None:
@@ -186,7 +186,7 @@ def insert_shots_from_result(upload_id: str, result: Any,
     if not len(stroke_labels) == len(stroke_confidences) == len(events):
         raise ValueError(f"{len(stroke_labels)} stroke labels / {len(stroke_confidences)} "
                          f"confidences for {len(events)} shots")
-    pairs = [(None, None) if s in (None, "unknown") else (s, None if c is None else float(c))
+    pairs = [(s, None) if s in (None, "unknown") else (s, None if c is None else float(c))
              for s, c in zip(stroke_labels, stroke_confidences)]
     with closing(connect()) as conn, conn:
         conn.execute("DELETE FROM shots WHERE upload_id = ?", (upload_id,))
@@ -201,6 +201,13 @@ def insert_shots_from_result(upload_id: str, result: Any,
     return len(events)
 
 
+def _fh_bh_status(stroke_label: Optional[str]) -> str:
+    """"not_analyzed" (尚未分析) | "undetermined" (classifier abstained) | "labeled"."""
+    if stroke_label is None:
+        return "not_analyzed"
+    return "undetermined" if stroke_label == "unknown" else "labeled"
+
+
 def list_shots(upload_id: str) -> list[dict]:
     with closing(connect()) as conn:
         rows = conn.execute(
@@ -213,7 +220,9 @@ def list_shots(upload_id: str) -> list[dict]:
             "contact_time_s": r["contact_time_s"],
             "peak_speed": r["peak_speed"],
             "wrist": r["wrist"],
-            "fh_bh_label": r["stroke_label"],      # None -> JSON null -> 尚未分析
+            # fh_bh_label is null unless a label exists; fh_bh_status says why it is null
+            "fh_bh_label": None if r["stroke_label"] in (None, "unknown") else r["stroke_label"],
+            "fh_bh_status": _fh_bh_status(r["stroke_label"]),
             "fh_bh_confidence": r["stroke_confidence"],  # heuristic, not a probability
             "ball_speed_kmh": r["ball_speed_kmh"],  # None -> JSON null -> 尚未分析
             "source": r["source"],
