@@ -5,10 +5,8 @@
   "reviewer": "project owner",
   "date": "2026-10-07",
   "not_contacts": [
+    175,
     415
   ],
-  "unlocated_hits": [
-    "K3 (detection frame 175): owner said the strip has a hit but gave no frame"
-  ],
-  "notes": "Owner gave hit frames for K1 30, K2 111, K4 257, K5 329, K6 404, K8 478 and K9 479 (K9 recorded as the same stroke as K8: one frame apart). K7 (detection 415, window 406-424) contains no hit; it sits 11 frames after the K6 hit at 404, i.e. a follow-through duplicate. Hits outside the nine detections were not reported, so the list is not marked complete and recall is unknown."
+  "notes": "Owner gave hit frames for K1 30, K2 111, K4 257, K5 329, K6 404, K8 478 and K9 479 (K9 recorded as the same stroke as K8: one frame apart). K7 (detection 415) has no hit: it is 11 frames after the K6 hit at 404, a follow-through duplicate. K3 (detection 175): the owner first said it had a hit, then corrected that a ball is visible but there is NO racket-ball contact, so it is a non-contact. All nine detections now have an owner verdict. Hits outside the nine detections were not reported, so the list is not marked complete and true recall is unknown."
 }

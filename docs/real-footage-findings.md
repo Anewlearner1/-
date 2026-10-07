@@ -492,3 +492,30 @@ One-to-one scoring (8 detections after leaving out K3's 175; 6 located hits):
   is 0.33 s and is needed, since the peak lands up to 8 frames from the hit; a
   tolerance in seconds (0.33 s) would stay comparable at 60 fps. Not changed
   here; raise with the owner.
+
+### Komura K3 corrected: a ball is visible but there is no hit (owner)
+K3 (detection 175) is a non-contact. It was first reported as having a hit, then
+corrected: a ball is in view but the racket does not strike it. Komura's nine
+detections now all have an owner verdict: 6 hits (K1, K2, K4, K5, K6, K8), and 3
+non-contacts (K3 175, K7 415, K9 481, the last a duplicate of the K8 hit).
+`not_contacts` in the label meta is [175, 415].
+
+Komura alone (tolerance 0.33 s = 10 frames): pose only 6 TP / 3 FP (P 0.67, R 1.00);
+merge 0.5 s 6 / 2 (P 0.75); the ball filter removes nothing (shirt graphic).
+
+All four clips, 0.33 s tolerance, TP/FP/FN (K3 is a ball-in-view-but-not-struck
+case, the scenario flagged as untested; whether the ball filter would catch it is
+unknown because the shirt graphic hides it):
+
+| Setting | TP | FP | FN | precision | recall |
+|---|---|---|---|---|---|
+| pose only | 28 | 23 | 0 | 0.55 | 1.00 |
+| merge 0.5 s | 28 | 17 | 0 | 0.62 | 1.00 |
+| ball filter | 24 | 4 | 4 | 0.86 | 0.86 |
+| ball filter + merge | 24 | 2 | 4 | 0.92 | 0.86 |
+
+The earlier "1.00 / 0.82" for the three side-view clips fell to 0.92 / 0.86 once
+Komura (a clip with clothing the colour rule mistakes for a ball) was added.
+Against ADR 0002 (precision and recall both >= 0.90 on >= 10 unseen
+spec-compliant clips) recall 0.86 is short, and none of these clips is
+spec-compliant, so this is not an acceptance result.
