@@ -69,3 +69,24 @@ people on distant courts). Images are NOT in the repo (identifiable people).
 
 Consequence: M1's current full-frame approach fails on this camera setup. A
 player detection + crop stage is a prerequisite, not an optimization.
+
+## 2026-10-07: instructional forehand clip (480x854 portrait, 27.9fps, 8.7s)
+
+An edited social-media short of one player (copyrighted, local only, not in
+repo): at least three forehand swings, a hard cut near frame ~100, frozen /
+slowed segments (frames ~121-154 and ~176-209 are near-identical stills) and
+text overlays. Fails the fps and camera-stability gates, as expected.
+
+- `pose_detection_rate` = **1.0** (242/242 frames). The player is roughly a
+  third of the frame height here, versus about 14% in the Insta360 stills
+  (1 of 5 found). Consistent with player size, not the model, being the limit.
+- `detect_shots` returned 8 events: frames 26, 50, 60, 81, 103, 156, 170, 217.
+- Reviewer's read (assistant, from a contact sheet at 11-frame spacing, NOT
+  frame-labeled): about 3 real strokes, near 81, 170 and 217. The other 5 look
+  like preparatory arm motion, non-racket-hand motion (3 of 8 events were
+  attributed to the left wrist), and the edit cut near 103. Treat as an
+  unverified estimate; the owner has not reviewed these frames.
+- Takeaway: with a large player the pose side works; the over-firing remains.
+  `combined_wrist_speed` takes the faster of both wrists every frame, so the
+  non-racket hand (which swings hard in a forehand) can create peaks. A
+  racket-hand-only signal is the obvious next experiment; untested here.
