@@ -2,9 +2,13 @@
   "video_id": "56a21f15-from_the_side_view_tennis_rf_wilsontennis_forehand_480p",
   "fps": 30.0,
   "contact_frames": [
+    52,
+    128,
     198,
     275,
     345,
+    504,
+    576,
     731,
     802,
     874

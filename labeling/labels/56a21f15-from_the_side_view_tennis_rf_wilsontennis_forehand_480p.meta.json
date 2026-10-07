@@ -5,5 +5,5 @@
   "frame_numbering": "opencv_decoder",
   "reviewer": "project owner",
   "date": "2026-10-07",
-  "notes": "Owner reviewed all 23 default-mode detections (E1-E23) on decoder strips (7 tiles, every 3rd frame, +/-9 around each detection): hits at E5, E6, E9, E19, E21, E22; none at the other 17; 'E3 really has none' (supersedes the earlier player-numbered 134). contact_frames are the DETECTION frames of those events, not located contact frames, so they are unusable for timing analysis. Missed hits (outside the 23 strips) were not reported, so recall is unknown. Under review: E1 f51, E3 f128, E13 f503, E16 f575 show a real ball near the player in frames the 3-frame-step strips may have skipped."
+  "notes": "Hits: E1 f52, E3 f128, E13 f504, E16 f576 (owner judged on every-frame decoder strips; these four had been called 'no hit' on every-3rd-frame strips that skipped the contact frame), plus E5, E6, E9, E19, E21, E22 (judged on every-3rd-frame strips; their contact_frames are the detection frames 198, 275, 345, 731, 802, 874, not located contacts). The remaining 13 detections were called 'no hit' on every-3rd-frame strips only, so some could be hidden hits. Missed hits outside the 23 strips were not reported: recall unknown."
 }

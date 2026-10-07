@@ -358,3 +358,20 @@ strip design hid from the owner, or the ball passed the racket without being
 struck. Sent to the owner as every-frame strips; the result above stands until
 then. Lesson regardless: review strips must show every frame near contact.
 Recall is unknown for Fed 2 (missed hits outside the 23 strips not reported).
+
+### Update: owner re-judged the 4 disputed Fed 2 events on every-frame strips
+E1 f52, E3 f128, E13 f504, E16 f576 are all hits. Their earlier "no hit" came
+from the every-3rd-frame strips skipping the contact frame. Fed 2 now has 10
+known hits. Held-out result (rule unchanged, one-to-one, +/-10 frames):
+
+| Method | TP | FP | FN | precision | hits kept |
+|---|---|---|---|---|---|
+| pose only | 10 | 13 | 0 | 0.43 | 10 / 10 |
+| + ball-colour rule | 9 | 2 | 1 | 0.82 | 9 / 10 |
+
+Remaining rule errors: 511 (follow-through of the 504 hit, a duplicate), 646 (a
+3-pixel speck on a hand), and the miss at 731 (a hit whose ball the colour
+filter did not pick up). Still open: the other 13 "no hit" detections were
+judged on every-3rd-frame strips only; E11 (418), E18 (646) and E23 (952) were
+sent back as every-frame strips. Recall for Fed 2 is unknown (hits outside the
+23 detections not reported).
