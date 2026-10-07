@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Rally AI — 分析儀表板</title>
+<style>
+  :root {
+    --fg: #1a1a1a;
+    --bg: #ffffff;
+    --border: #d9d9d9;
+    --muted: #666;
+    --fail-bg: #fdecea;
+    --fail-border: #d93025;
+    --hl-bg: #eef4ff;
+    --hl-border: #1a56db;
+    --pill-ph-bg: #f2f2f2;
+    --pill-ph-fg: #6b6b6b;
+    --skeleton: #ececec;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif;
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 24px 16px 64px;
+    color: var(--fg);
+    background: var(--bg);
+    line-height: 1.6;
+  }
+  h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
+  h2 { font-size: 1.05rem; margin: 0 0 8px; }
+  a { color: var(--hl-border); }
+  .muted { color: var(--muted); font-size: 0.9rem; }
+  [hidden] { display: none !important; }
+
+  /* §1 video */
+  .video-wrap { background: #000; border-radius: 10px; overflow: hidden; }
+  video { display: block; width: 100%; max-height: 60vh; background: #000; }
+
+  /* §1 / F5 timeline (visual; the shot list is the accessible equivalent) */
+  .timeline { position: relative; height: 44px; margin: 16px 8px 4px; }
+  .timeline .track {
+    position: absolute; left: 0; right: 0; top: 20px; height: 2px; background: var(--border);
+  }
+  .timeline .dot {
+    position: absolute; top: 12px; width: 18px; height: 18px; margin-left: -9px;
+    border-radius: 50%; border: 2px solid #888; background: #fff; cursor: pointer;
+    transition: background-color 0.25s, border-color 0.25s, transform 0.25s;
+  }
+  .timeline .dot.past { background: #888; }
+  .timeline .dot.current {
+    background: var(--hl-border); border-color: var(--hl-border); transform: scale(1.3);
+  }
+
+  /* §1 summary + list */
+  .grid { display: grid; grid-template-columns: 220px 1fr; gap: 16px; margin-top: 12px; align-items: start; }
+  .summary {
+    position: sticky; top: 12px;
+    border: 1px solid var(--border); border-radius: 10px; padding: 14px;
+  }
+  .summary dl { margin: 0; }
+  .summary .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 6px 0; }
+  .summary dt { color: var(--muted); }
+  .summary dd { margin: 0; text-align: right; }
+  .summary .count { font-size: 1.6rem; font-weight: 700; }
+  .summary .value { font-weight: 600; }
+  .tag-exp {
+    display: inline-block; font-size: 0.75rem; padding: 0 6px; border-radius: 4px;
+    border: 1px dashed #b26a00; color: #8a5300; margin-left: 4px;
+  }
+
+  .list-toggle { display: none; }
+  .shot-list {
+    list-style: none; margin: 0; padding: 0;
+    max-height: 60vh; overflow-y: auto; position: relative;
+  }
+  .shot-list li { margin: 0 0 8px; }
+  .shot-card {
+    display: block; width: 100%; text-align: left; font: inherit; color: inherit;
+    background: #fff; border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 14px; cursor: pointer;
+    transition: background-color 0.3s, border-color 0.3s;
+  }
+  .shot-card:focus-visible { outline: 3px solid var(--hl-border); outline-offset: 2px; }
+  .shot-card[aria-current="true"] { background: var(--hl-bg); border-color: var(--hl-border); }
+  .shot-card .head { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+  .shot-card .title { font-weight: 700; }
+  .shot-card .time { font-variant-numeric: tabular-nums; color: var(--muted); }
+  .shot-card .line { margin-top: 4px; font-size: 0.92rem; }
+
+  /* §3 pills: placeholder (grey, italic) vs guess (secondary) vs real value */
+  .pill {
+    display: inline-block; padding: 0 8px; border-radius: 999px; font-size: 0.85rem; line-height: 1.6;
+  }
+  .pill.placeholder { background: var(--pill-ph-bg); color: var(--pill-ph-fg); font-style: italic; border: 1px solid #e0e0e0; }
+  .pill.guess { background: #fff; color: #444; border: 1px dashed #888; }
+  .pill.value { background: #1a1a1a; color: #fff; }
+
+  /* §2 states */
+  .card { border-radius: 10px; padding: 16px; margin: 16px 0; border: 1px solid var(--border); }
+  .card.fail { background: var(--fail-bg); border-color: var(--fail-border); }
+  .skeleton-block {
+    height: 56px; border-radius: 10px; background: var(--skeleton); margin-bottom: 8px;
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+  .skeleton-block.short { height: 120px; }
+  @keyframes pulse { 50% { opacity: 0.5; } }
+  @media (prefers-reduced-motion: reduce) {
+    .skeleton-block { animation: none; }
+    .shot-card, .timeline .dot { transition: none; }
+  }
+
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+  }
+
+  @media (max-width: 640px) {
+    .grid { grid-template-columns: 1fr; }
+    .summary { position: static; }
+    .list-toggle {
+      display: inline-block; font: inherit; padding: 6px 12px; margin-bottom: 8px;
+      border-radius: 8px; border: 1px solid #333; background: #fff; cursor: pointer;
+    }
+    .shot-list.collapsed { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Rally AI</h1>
+<p class="muted">分析儀表板 · <a href="upload.html">上傳新影片</a></p>
+
+<!-- §1 video area (F1). Raw upload video; see README for the overlay gap. -->
+<section id="video-section" class="video-wrap" hidden>
+  <video id="video" controls preload="metadata" playsinline></video>
+</section>
+<p id="video-error" class="muted" hidden>影片目前無法播放，擊球資料仍可瀏覽。</p>
+
+<!-- §2 loading: skeleton, no fake shots, no "0 拍" -->
+<section id="state-loading" hidden aria-busy="true">
+  <p id="loading-message" role="status"></p>
+  <div class="grid" aria-hidden="true">
+    <div class="skeleton-block short"></div>
+    <div>
+      <div class="skeleton-block"></div>
+      <div class="skeleton-block"></div>
+      <div class="skeleton-block"></div>
+    </div>
+  </div>
+</section>
+
+<!-- §2 done with 0 shots -->
+<section id="state-empty" hidden>
+  <div class="card">
+    <p id="empty-message"></p>
+    <a href="upload.html">重新上傳</a>
+  </div>
+</section>
+
+<!-- worker failed, 404, network or malformed response -->
+<section id="state-error" hidden>
+  <div class="card fail" role="alert">
+    <p id="error-message"></p>
+    <details id="error-detail-wrap" hidden>
+      <summary>技術細節</summary>
+      <pre id="error-detail" class="muted"></pre>
+    </details>
+    <a href="upload.html">回到上傳頁</a>
+  </div>
+</section>
+
+<!-- §1 normal -->
+<section id="state-normal" hidden>
+  <h2 class="sr-only">擊球時間軸</h2>
+  <div class="timeline" id="timeline" aria-hidden="true"><div class="track"></div></div>
+
+  <div class="grid">
+    <aside class="summary" aria-labelledby="summary-title">
+      <h2 id="summary-title">摘要</h2>
+      <dl>
+        <div class="row"><dt>擊球數</dt><dd class="count" id="sum-shots"></dd></div>
+        <div class="row"><dt>正拍</dt><dd id="sum-fh"></dd></div>
+        <div class="row"><dt>反拍</dt><dd id="sum-bh"></dd></div>
+      </dl>
+      <p id="sum-guess-note" class="muted" hidden></p>
+    </aside>
+
+    <div>
+      <h2 id="list-title">逐拍清單</h2>
+      <button type="button" class="list-toggle" id="list-toggle" aria-expanded="true" aria-controls="shot-list">收合逐拍清單</button>
+      <p class="sr-only" id="list-help">使用上下方向鍵切換擊球，按 Enter 跳到該拍的影片位置。</p>
+      <ol class="shot-list" id="shot-list" aria-labelledby="list-title" aria-describedby="list-help"></ol>
+    </div>
+  </div>
+</section>
+
+<div id="live" class="sr-only" aria-live="polite"></div>
+
+<script src="upload_flow.js"></script>
+<script src="dashboard_logic.js"></script>
+<script src="dashboard.js"></script>
+</body>
+</html>

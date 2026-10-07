@@ -35,6 +35,15 @@
     sections[name] = document.getElementById("screen-" + name);
   });
 
+  // "影片已送出處理": show the id and link to the dashboard for this upload.
+  function showSubmitted(uploadId) {
+    document.getElementById("submitted-upload-id").textContent = uploadId || "";
+    var link = document.getElementById("submitted-dashboard-link");
+    link.href = "dashboard.html?upload=" + encodeURIComponent(uploadId || "");
+    link.hidden = !uploadId;
+    showScreen("submitted");
+  }
+
   function showScreen(name) {
     Object.keys(sections).forEach(function (key) {
       if (!sections[key]) return;
@@ -61,9 +70,7 @@
           "msg-info"
         );
         document.getElementById("info-continue-btn").onclick = function () {
-          showScreen("submitted");
-          document.getElementById("submitted-upload-id").textContent =
-            result.uploadId || "";
+          showSubmitted(result.uploadId);
         };
         document.getElementById("info-reupload-btn").onclick = function () {
           resetToGuidance();
@@ -72,9 +79,7 @@
         break;
 
       case SCREEN.SUBMITTED:
-        document.getElementById("submitted-upload-id").textContent =
-          result.uploadId || "";
-        showScreen("submitted");
+        showSubmitted(result.uploadId);
         break;
 
       case SCREEN.RESHOOT:

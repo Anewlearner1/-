@@ -7,6 +7,10 @@
 > **沒有**球速估算（M5 未做）、也沒有落點/球場座標（M4 未做）。本設計刻意不假裝這些欄位已存在，
 > 以免 frontend-engineer 對著一個目前後端給不出來的 API 介面實作。
 
+> **實作狀態（frontend-engineer，2026-10-07）**：§1–§5 已實作於 `frontend/dashboard.html`
+> （`dashboard.js` + 純邏輯 `dashboard_logic.js`），未在真實瀏覽器驗證。F1 骨架疊圖尚未實作
+> （API 未提供疊圖），目前播放原始影片。細節與取捨見 `frontend/README.md` 的 Dashboard 一節。
+
 ## 0. 資料假設（寫給 frontend-engineer 的現況對照表）
 
 | 儀表板元件 | 對應功能 | 今天 pipeline 是否有真實資料 | 沒有資料時顯示什麼 |

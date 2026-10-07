@@ -1,4 +1,4 @@
-# Frontend — upload + quality-gate flow
+# Frontend — upload + quality-gate flow, M6 dashboard
 
 Implements `design/upload-flow.md` §1-§4 against the real
 `POST /upload` endpoint in `backend/api/upload.py`. No build toolchain:
@@ -158,3 +158,99 @@ cd rally-ai
 node --test tests/test_frontend_upload_flow.js
 python3 -m pytest -q
 ```
+
+---
+
+# Dashboard (M6) — `dashboard.html?upload=<id>`
+
+Implements `design/dashboard.md` §1-§5 against the real `GET /uploads/{id}`,
+`GET /uploads/{id}/shots` and `GET /uploads/{id}/video`. Same style as the
+upload page: plain HTML/CSS/JS, no build step, no CDN.
+
+## Files
+
+- `dashboard_logic.js` — pure, DOM-free: `classifyUploadStatus` (queued /
+  processing -> loading + poll every 3 s, done -> fetch shots, failed ->
+  error), `buildShotsView` (0 shots -> empty state, else sorted cards +
+  summary), `currentShotIndex` (§4.1 highlight rule), `fhBhPill` (§3.1),
+  `ballSpeedPill` (§5, always 尚未分析), `summarize`, `shouldAutoScroll`.
+  Error copy comes from `upload_flow.js` `errorCopyForCode` / `ERROR_COPY_ZH`
+  (require()d under Node, `window.UploadFlow` in the browser), not copied.
+- `dashboard.js` — DOM wiring: fetch, polling, rendering, video sync.
+- `dashboard.html` — the page; loads `upload_flow.js`, `dashboard_logic.js`,
+  `dashboard.js` in that order.
+
+Open it like the upload page (static server + `RALLY_API_BASE` if the API is
+on another origin), e.g. `http://localhost:8080/dashboard.html?upload=<id>`.
+
+## Behaviour and decisions
+
+- **Highlight (§4.1/§4.2)**: last shot with `contact_time_s <= currentTime`,
+  none before the first shot. Updated on `timeupdate`, `seeking` (fires while
+  the seek bar is dragged, §4.5) and `seeked`; only re-rendered when the
+  index changes; CSS transitions fade the highlight (§4.3).
+- **Click to seek (§4.4)**: seeks to exactly `contact_time_s`, **no 0.5-1 s
+  pre-roll** (the doc makes it optional). With a pre-roll the §4.1 rule would
+  highlight the *previous* shot on the next `timeupdate`, contradicting
+  "立即高亮該拍". The page passes a 1 ms tolerance (`SEEK_TOLERANCE_S`) to the
+  rule so a seek that a browser reports a hair early does not flip back; this
+  is well under one frame, so playback highlighting is unaffected.
+- **Auto-scroll (§4.6)**: the list scrolls to the current card unless the user
+  scrolled / swiped / clicked / arrow-keyed in the list in the last 3 s. A
+  click on a shot always scrolls to it.
+- **FH/BH (§3.1)**: driven only by `fh_bh_status`. `not_analyzed` (or missing /
+  unknown) -> 尚未分析; `undetermined` -> 無法判斷 + tooltip; `labeled` ->
+  正手 / 反手, with 推測： and a dashed secondary pill when confidence < 0.5.
+  A labeled shot with **null** confidence is also shown as 推測 (not stated in
+  the doc; chosen so an unknown confidence never looks certain). `other` ->
+  不適用 (ADR 0002 wording), grey.
+- **Summary**: counts only `labeled` forehand/backhand; `other` is not counted.
+  No labeled shot -> 尚未分析 (never 0). Exception: if the classifier ran and
+  abstained on **every** shot, the summary says 無法判斷 instead, following
+  §3.1's rule that undetermined must not read as 尚未分析. If only `other`
+  shots are labeled the counts are a real 0 / 0 (the classifier did run).
+  With any labels, both counts get an 實驗中 tag and a "其中 N 拍為推測" note.
+  Summary rows keep §1's 正拍 / 反拍 wording; pills use §3.1's 正手 / 反手.
+- **Ball speed (§5)**: always 尚未分析. `peak_speed` (wrist speed) is never read
+  by the page; `ball_speed_kmh` is ignored even if non-null until M5 defines
+  its display.
+- **States (§2)**: loading shows a skeleton plus 分析中 and the raw video (it is
+  playable before analysis ends); 0 shots shows the doc's empty copy with a
+  重新上傳 link; `failed` shows a Chinese error with the worker's English
+  message only under 技術細節, plus a link back to `upload.html` (the
+  quality-gate re-shoot screen is not used: a worker failure is not a footage
+  problem the gate found). 404 / missing `?upload=` -> the `upload_not_found`
+  copy; network errors -> the default copy.
+- **Accessibility**: the shot list is an `<ol>` of buttons with a roving
+  tabindex (one Tab stop; arrows / Home / End move, Enter / Space seek); the
+  current card has `aria-current="true"`. A polite live region announces the
+  current shot after a click or while paused (not during playback, to avoid
+  chatter). The timeline is a visual duplicate of the list and is
+  `aria-hidden`. Narrow screens get a 收合 / 展開逐拍清單 toggle.
+
+## Not done / not verified
+
+- **F1 skeleton overlay**: no API serves an overlay video or landmarks, so the
+  page plays the raw upload.
+- `upload.html` does not link to the dashboard after "已送出處理" (that file is
+  outside this change); open the dashboard URL by hand with the upload id.
+- **Not run in a real browser** (none here). Verified through the logic tests,
+  a fake-DOM run of `dashboard.js`, and real backend responses. Not checked:
+  how it looks, real `timeupdate` / `seeking` timing during a drag, scroll
+  maths, smooth transitions, real screen-reader output.
+
+## Dashboard tests
+
+- `tests/test_frontend_dashboard_logic.js` — highlight rule incl. boundaries,
+  pills for every status, summary counts, states, copy reuse.
+- `tests/test_frontend_dashboard_page.js` — static checks: every id the script
+  uses exists, script order, no external URLs, no duplicated error copy.
+- `tests/test_frontend_dashboard_dom.js` — runs the real `dashboard.js` against
+  a fake DOM + mocked fetch: polling, aria-current following playback / seek
+  drag / click, 404, empty state.
+- `tests/test_frontend_dashboard_against_backend.py` — real TestClient
+  responses (queued, processing, failed, 0 shots, unclassified, classified,
+  all-undetermined, 404, Range video) piped into `dashboard_logic.js` via Node.
+
+Note: on Node 22, `node --test tests/` fails (it treats the directory as a
+module). Use `node --test tests/*.js`.
