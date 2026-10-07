@@ -62,6 +62,18 @@ $env:RALLY_VIDEO_DIR = "C:\rally-videos"
 python -m backend.library scan --shots --ball-filter --merge-within-s 0.5
 ```
 
-## 6. 你的影片不會離開你的電腦
+## 6. 標註影片（拍好驗收影片之後）
+
+```powershell
+$env:RALLY_VIDEO_DIR = "C:\rally-videos"      # 放驗收影片的資料夾
+python -m labeling.label_server
+```
+
+用 Chrome／Edge 開 `http://localhost:8001/`。按鍵：←／→ 一幀、Shift+←／→ 十幀、空白鍵播放／暫停、`F` 正手、`B` 反手、`O` 其他、`Delete` 刪除最近的標記。完整說明見 `labeling/README.md`。
+
+- 第一次打開一支影片要先做「標記用影片」，30 秒的影片約 15–20 秒。
+- 若出現錯誤說無法建立 VP8 影片：代表你電腦上的 OpenCV 不含該編碼器（在 Linux 測過可以，Windows 尚未驗證），把錯誤訊息貼給我。
+
+## 7. 你的影片不會離開你的電腦
 
 這套流程完全在你自己的電腦上跑：影片存在 `C:\Users\roy33\rally-ai\data\uploads\`，資料庫在 `data\rally.sqlite3`，兩者都被 `.gitignore` 擋住，不會被推到 GitHub。
