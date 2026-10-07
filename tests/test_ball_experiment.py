@@ -2,7 +2,7 @@
 import cv2
 import numpy as np
 
-from ml.ball_experiment import find_ball_blob
+from ml.ball_experiment import find_ball_blob, horizontal_reversal, nearest_ball_x
 
 BALL_BGR = (40, 230, 230)     # yellow-green in BGR
 WRIST = (100.0, 100.0)
@@ -32,3 +32,23 @@ def test_non_ball_colours_and_missing_wrists_return_none():
     assert find_ball_blob(im, [WRIST], radius_px=30) is None
     im2 = _frame(); cv2.circle(im2, (115, 100), 4, BALL_BGR, -1)
     assert find_ball_blob(im2, [(float("nan"), float("nan"))], radius_px=30) is None
+
+
+def test_a_ball_that_comes_in_and_goes_back_is_a_reversal():
+    track = [(125, 335.0), (126, 292.0), (127, 258.0), (128, 221.0), (129, 184.0), (130, 225.0), (131, 270.0)]
+    assert horizontal_reversal(track) is True
+
+
+def test_a_ball_that_passes_by_is_not_a_reversal():
+    assert horizontal_reversal([(f, 300.0 - 30 * i) for i, f in enumerate(range(10, 18))]) is False
+
+
+def test_too_few_ball_points_is_undecidable():
+    assert horizontal_reversal([(1, 10.0), (2, 40.0), (3, 70.0)]) is None
+
+
+def test_nearest_ball_x_returns_the_blob_closest_to_a_wrist():
+    im = _frame()
+    cv2.circle(im, (115, 100), 4, BALL_BGR, -1)
+    cv2.circle(im, (160, 100), 4, BALL_BGR, -1)
+    assert abs(nearest_ball_x(im, [WRIST], radius_px=80) - 115) < 2

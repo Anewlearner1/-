@@ -40,6 +40,52 @@ def find_ball_blob(frame_bgr: np.ndarray, wrists: Sequence[Sequence[float]],
     return None
 
 
+# Trajectory variant (second experiment): fixed before its single run.
+TRAJ_WINDOW = 12             # frames either side of the event
+TRAJ_RADIUS_TORSO = 4.0      # wider than WINDOW's search: the ball travels before/after contact
+MIN_SIDE = 2                 # ball points needed on each side of the reversal
+MIN_SPEED = 2.0              # px/frame of horizontal speed on each side
+
+
+def nearest_ball_x(frame_bgr: np.ndarray, wrists: Sequence[Sequence[float]],
+                   radius_px: float) -> Optional[float]:
+    """Horizontal position of the ball-coloured blob nearest a wrist, within radius."""
+    mask = cv2.inRange(cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV), HSV_LO, HSV_HI)
+    _, _, stats, centres = cv2.connectedComponentsWithStats(mask)
+    best = None
+    for s, c in zip(stats[1:], centres[1:]):
+        if not AREA_MIN <= s[4] <= AREA_MAX:
+            continue
+        d = min((np.linalg.norm(c - np.asarray(w, float)) for w in wrists
+                 if not np.isnan(np.asarray(w, float)).any()), default=np.inf)
+        if d <= radius_px and (best is None or d < best[0]):
+            best = (d, float(c[0]))
+    return None if best is None else best[1]
+
+
+def horizontal_reversal(track: Sequence[tuple[int, float]],
+                        min_side: int = MIN_SIDE, min_speed: float = MIN_SPEED) -> Optional[bool]:
+    """Does the ball's horizontal motion reverse? None when there are too few points.
+
+    From a side-on camera a struck ball comes toward the player and leaves the
+    other way; a ball that only passes by keeps its direction. ``track`` is
+    [(frame, x)] sorted by frame.
+    """
+    if len(track) < 2 * min_side:
+        return None
+
+    def median_speed(pts):
+        if len(pts) < 2:
+            return 0.0
+        return float(np.median([(x2 - x1) / (f2 - f1) for (f1, x1), (f2, x2) in zip(pts, pts[1:])]))
+
+    for k in range(min_side, len(track) - min_side + 1):
+        va, vb = median_speed(track[:k]), median_speed(track[k:])
+        if abs(va) >= min_speed and abs(vb) >= min_speed and np.sign(va) != np.sign(vb):
+            return True
+    return False
+
+
 def frames_with_ball(video: Path, landmarks: np.ndarray, event_frame: int) -> int:
     """How many of the 2*WINDOW+1 frames around the event show a ball blob near a wrist."""
     shoulders = (landmarks[:, 11] + landmarks[:, 12]) / 2

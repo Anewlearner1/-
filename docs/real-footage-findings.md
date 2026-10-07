@@ -264,3 +264,32 @@ but not sufficient cue: precision 0.75 / recall 0.86 stand as measured, and the
 remaining errors are the case a ball-trajectory cue (direction or speed change
 at the racket) exists to handle. What the ball was doing at 577-578 and
 643-644 is unknown.
+
+## 2026-10-07 (ball-trajectory experiment): result conflicts with the labels, PENDING
+
+Cue: from a side-on camera a struck ball reverses horizontal direction near the
+racket. Fixed before a single run (`horizontal_reversal` in
+`ml/ball_experiment.py`): +/-12 frames, ball-coloured blob nearest a wrist
+within 4 torso lengths, reversal = a split with >= 2 points each side whose
+median horizontal speeds have opposite signs and are each >= 2 px/frame.
+
+| Owner label | reversal yes | reversal no | too few ball points |
+|---|---|---|---|
+| contact (7) | 4 | 0 | 3 |
+| not a contact (12) | 3 | 0 | 9 |
+
+The cue never said "no", so as measured it does not separate the labels. The
+three "not a contact" events with a reversal are Fed 1 570 and 589 (same ball,
+frames 575-580) and 651 (frames 641-646). Their tracks match confirmed hits:
+ball approaching at about 35-40 px/frame, then leaving the other way (570:
+229, 200, 171, 155 then 220, 288; confirmed hit 129: 335 ... 184 then 225).
+In the assistant's decoded frames the racket appears to meet the ball at 578
+and 645 (low backhand).
+
+This conflicts with the owner's re-check ("no contact in 570-580 and
+640-651"). Possible reasons, not resolved: the owner and the assistant are not
+looking at the same frames (variable-frame-rate mp4s can number frames
+differently across tools; this would also bear on the consistent "detector 3
+frames early" offset), the ball rebounded off something other than the racket,
+or the assistant is misreading the frames. The decoded frames were sent to the
+owner to judge directly. No conclusion until then; the labels are unchanged.
