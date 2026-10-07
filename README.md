@@ -6,6 +6,12 @@
 
 這是一個獨立專案，跟同帳號下的 `tennis-form-coach`（單人 MediaPipe 評分/量測 CLI 工具）是不同的系統——規模大很多，包含球員偵測追蹤、TrackNet 球追蹤、球場 homography 校正、前端儀表板等，兩者除了同樣是網球影片分析之外，程式碼與架構不共用。
 
+## 快速開始
+
+- 在自己的 Windows 電腦上跑完整流程（上傳 → 分析 → 儀表板）：[`docs/run-locally-windows.md`](docs/run-locally-windows.md)
+- 驗收影片怎麼拍：[`docs/acceptance-footage-spec.md`](docs/acceptance-footage-spec.md)
+- 目前進度：[`docs/status.md`](docs/status.md)
+
 ## 團隊（`.claude/agents/`）
 
 | Subagent | 角色 | 負責範圍 | 對應里程碑 |

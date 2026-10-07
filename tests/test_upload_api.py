@@ -128,3 +128,12 @@ def test_racket_hand_is_stored_and_an_invalid_one_is_rejected(tmp_path, client, 
     with open(video, "rb") as f:
         none = client.post("/upload", files={"file": ("good.mp4", f, "video/mp4")})
     assert db.get_upload(none.json()["upload_id"])["racket_hand"] is None
+
+
+def test_frontend_is_served_from_the_api_origin(client):
+    page = client.get("/app/upload.html")
+    assert page.status_code == 200 and "Rally AI" in page.text
+    assert client.get("/app/dashboard.html").status_code == 200
+    root = client.get("/", follow_redirects=False)
+    assert root.status_code in (302, 307) and root.headers["location"] == "/app/upload.html"
+    assert client.get("/uploads/nope").json()["error"] == "upload_not_found"   # API not shadowed

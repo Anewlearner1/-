@@ -34,7 +34,8 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, File, Form, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from backend import db
 from backend.upload_quality import (
@@ -203,3 +204,18 @@ async def get_upload_video(upload_id: str):
         return _not_found(upload_id)
     media = _VIDEO_TYPES.get(Path(path).suffix.lower(), "application/octet-stream")
     return FileResponse(path, media_type=media)
+
+
+# The static frontend, served from the same origin as the API so the pages
+# work with no CORS setup: http://localhost:8000/app/upload.html and
+# /app/dashboard.html?upload=<id>. Mounted last so it cannot shadow API routes.
+FRONTEND_DIR = Path(__file__).resolve().parent.parent.parent / "frontend"
+
+
+@app.get("/", include_in_schema=False)
+async def root() -> RedirectResponse:
+    return RedirectResponse("/app/upload.html")
+
+
+if FRONTEND_DIR.is_dir():
+    app.mount("/app", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
