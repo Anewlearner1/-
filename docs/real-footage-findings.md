@@ -427,3 +427,24 @@ the shipped code reproduced the experiment numbers exactly.
 - The window was chosen with these clips in view, and the ball rule was built
   on two of them, so the combined 1.00 / 0.82 is optimistic. Fed 2 alone, held
   out for the ball rule only: 1.00 / 0.77 with both options.
+
+## 2026-10-07: two more clips (Komura forehand, "Which Forehand" montage) — no labels yet
+
+| Clip | Format | Player in frame | Pose rate | Pose-only detections | Gate |
+|---|---|---|---|---|---|
+| Komura | 720x1280, 30 fps, 16.9 s, fixed camera behind the baseline, one player | 28% of frame height (363 px) | 1.00 | 9 (frames 38, 103, 175, 250, 330, 396, 415, 471, 481) | fps FAIL, stability PASS |
+| "Which Forehand" | 720x1280, 30 fps, 27 s, edited montage of several named players | 46% | 0.945 | 14 | fps FAIL, stability FAIL |
+
+- The montage has cuts, captions and different players and courts: not a
+  usable evaluation clip. Its detections are not analysed.
+- Komura is the closest clip so far to the target setup (fixed, behind the
+  baseline, single player) but still 30 fps and the player is larger than in the
+  Insta360 stills (28% vs about 14% of frame height). Full-frame pose worked at
+  28% (and on Fed 1 at 20%), consistent with player size being the limit.
+- The ball-colour filter is uninformative on Komura: 11-17 of 17 frames "see a
+  ball" for every detection, because the player's white shirt carries a
+  yellow-green graphic that matches the colour range. It keeps all 9 detections.
+  A concrete case of the colour cue's known fragility (clothing).
+- Merge at 0.5 s removes the 481 detection (10 frames after 471).
+- Every-frame strips for the 9 detections sent to the owner; nothing is
+  labeled, so there are no precision/recall figures for these clips.
